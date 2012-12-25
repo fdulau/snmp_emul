@@ -4,7 +4,7 @@
 # snmp_emul
 # Gnu GPL2 license
 #
-# $Id: agentx_redis.pl 2 2011-01-25 09:47:32 fabrice $
+# $Id: parse_snmp_emul.pl 2 2011-01-25 09:47:32 fabrice $
 #
 # Fabrice Dulaunoy <fabrice@dulaunoy.com>
 # copyright 2010,2011,2012,2013 Fabrice Dulaunoy
