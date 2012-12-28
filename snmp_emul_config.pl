@@ -70,7 +70,7 @@ sub list_dir {
 my $available = list_dir($AVAILABLE_PATH);
 my $enabled = list_dir( $ENABLED_PATH, 1 );
 
-app->config( hypnotoad => { listen => ['http://*:8080']  , pid_file => '/var/run/snmp_emul_config.pid'} );
+app->config( hypnotoad => { listen => ['http://*:8080']  , pid_file => '/var/run/snmp_emul_config.pid' ,  inactivity_timeout => 60 } );
 
 app->secret('Fab pass');
 
