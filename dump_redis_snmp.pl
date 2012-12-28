@@ -4,10 +4,10 @@
 # snmp_emul
 # Gnu GPL2 license
 #
-# $Id: dump_redis_snmp.pl 2 2010-12-18 13:54:15Z fabrice $
+# $Id: agentx_redis.pl 2 2010-12-18 13:54:15Z fabrice $
 #
 # Fabrice Dulaunoy <fabrice@dulaunoy.com>
-# copyright 2010,2011,2012,2013 Fabrice Dulaunoy
+# copyright 2010,2011,2012 Fabrice Dulaunoy
 ###########################################################
 
 use strict;
@@ -40,13 +40,12 @@ my $val;
 my $do;
 my $next;
 
-my %all_oid = $redis->hgetall( 'next' );
+my %all_oid  = $redis->hgetall( 'next' );
 my %all_type = $redis->hgetall( 'type' );
 if ( scalar keys %all_oid )
 {
     my $l_oid  = length( ( sort { length $a <=> length $b } keys %all_oid )[-1] );
-    
-    my $l_type = 2 + length( ( sort { length $a <=> length $b } values %all_type )[-1] );
+    my $l_type = length( ( sort { length $a <=> length $b } values %all_type )[-1] );
 
     my %all_val = $redis->hgetall( 'val' );
     my $l_val = length( ( sort { length $a <=> length $b } values %all_val )[-1] );
@@ -61,10 +60,11 @@ if ( scalar keys %all_oid )
     say print_format_center( 'oid', 'next', 'type', 'val', 'do' );
     foreach $oid ( sort { sort_oid( $a, $b ) } keys %all_oid )
     {
-        $type = $all_type{ $oid };
-        $val  = $redis->hget( 'val', $oid ) // '';
+# $type = $all_oid{ $oid };
+        $type = $redis->hget( 'type', $oid ) // '';
+        $val  = $redis->hget( 'val',  $oid ) // '';
         $next = $redis->hget( 'next', $oid ) // '';
-        $do   = $redis->hget( 'do', $oid ) // '';
+        $do   = $redis->hget( 'do',   $oid ) // '';
         say print_format( $oid, $next, $type, $val, $do );
     }
 
