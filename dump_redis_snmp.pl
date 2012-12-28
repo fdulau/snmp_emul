@@ -17,7 +17,7 @@ use Data::Dumper;
 
 use Redis;
 
-my $VERSION = '0.06';
+my $VERSION = '0.07';
 
 my $REDIS = '127.0.0.1:6379';
 my $redis = Redis->new(
@@ -40,9 +40,15 @@ my $val;
 my $do;
 my $next;
 
-my %all_oid  = $redis->hgetall( 'next' );
+
+my %all_next  = $redis->hgetall( 'next' );
 my %all_type = $redis->hgetall( 'type' );
-if ( scalar keys %all_oid )
+
+## merge all_next and all_type to get all oid in all case( oops, a lot of all in that comment ) ##
+
+my %all_oid = ( %all_next ,  %all_type);
+
+if ( scalar keys %all_oid)
 {
     my $l_oid  = length( ( sort { length $a <=> length $b } keys %all_oid )[-1] );
     my $l_type = length( ( sort { length $a <=> length $b } values %all_type )[-1] );
