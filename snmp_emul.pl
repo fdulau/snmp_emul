@@ -74,11 +74,10 @@ sub myhandler
         my $oid            = $request->getOID();
         my $translated_oid = SNMP::translateObj( $oid );
         my $next           = $redis->hget( 'next', $translated_oid ) || $translated_oid;
-        last if ( $next eq $translated_oid );
-# say "mode=".$request_info->getMode() ;
+       
+ # say "<$translated_oid> mode=".$request_info->getMode() ;
         if ( $request_info->getMode() == MODE_GET )
         {
-
             if ( $redis->hexists( 'access', $translated_oid ) )
             {
                 my $type = $redis->hget( 'type', $translated_oid );
@@ -109,7 +108,7 @@ sub myhandler
         }
         elsif ( $request_info->getMode() == MODE_GETNEXT )
         {
-
+            last if ( $next eq $translated_oid );
             if (   $redis->hexists( 'type', $translated_oid )
                 && $redis->hget( 'type', $translated_oid ) != 0 )
             {
@@ -222,6 +221,7 @@ sub myhandler
                 $request->setError( $request_info, SNMP_ERR_READONLY );
             }
         }
+        
     }
 }
 
