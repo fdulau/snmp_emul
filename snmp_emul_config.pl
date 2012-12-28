@@ -6,8 +6,11 @@ use File::Spec;
 use Data::Dumper;
 
 use subs qw( debug  list_dir);
-my $LOG = '/tmp/mojo.log';
 
+
+my $VERSION='0.02';
+
+my $LOG = '/tmp/mojo.log';
 my $BASE             = '/opt/snmp_emul/conf';
 my $AVAILABLE_FOLDER = 'available';
 my $ENABLED_FOLDER   = 'enabled';
@@ -16,8 +19,13 @@ my $CMD = '/opt/snmp_emul/bin/parse_snmp_emul.pl';
 my $AVAILABLE_PATH = File::Spec->catfile( $BASE, $AVAILABLE_FOLDER );
 my $ENABLED_PATH   = File::Spec->catfile( $BASE, $ENABLED_FOLDER );
 
+
+my $DEBUG = shift;
+
 sub debug {
     my $msg = shift;
+    if ( $DEBUG )
+    {
     my ( $pkg, $file, $line, $sub ) = ( caller(0) )[ 0, 1, 2, 3 ];
     if ( ref $msg ) {
         $msg = "[$line] " . Dumper($msg);
@@ -29,6 +37,7 @@ sub debug {
     open LOG, '>>', $LOG;
     print LOG "$msg\n";
     close LOG;
+  }
 }
 
 sub list_dir {
@@ -39,11 +48,7 @@ sub list_dir {
         $tag = 'dis_';
     }
     my $res;
-
-    #    my @table;
     opendir( my $dh, $some_dir ) || die "can't opendir $some_dir: $!";
-
-    # my  @dots = grep { /^\./ && -f "$some_dir/$_" } readdir($dh);
     my @dots = sort grep { -f "$some_dir/$_" } readdir($dh);
     closedir $dh;
     foreach my $file_name (@dots) {
@@ -65,7 +70,7 @@ sub list_dir {
 my $available = list_dir($AVAILABLE_PATH);
 my $enabled = list_dir( $ENABLED_PATH, 1 );
 
-app->config( hypnotoad => { listen => ['http://*:8080'] } );
+app->config( hypnotoad => { listen => ['http://*:8080']  , pid_file => '/var/run/snmp_emul_config.pid'} );
 
 app->secret('Fab pass');
 
@@ -76,6 +81,7 @@ get '/' => sub {
     $enabled = list_dir( $ENABLED_PATH, 1 );
     $self->stash( list_available => $available );
     $self->stash( list_enable    => $enabled );
+    $self->stash( version => $VERSION );
 
 } => 'form';
 
@@ -115,10 +121,8 @@ post '/select' => sub {
             if ( $line =~ /^$AVAILABLE_PATH\/*(.*)/ ) {
                 $name = $1;
                 my $dest_file = File::Spec->catfile( $ENABLED_PATH, $name );
-                #debug "LINK=$line <$name> <$dest_file>";
                 debug "symlink result:".symlink( $line, $dest_file );
 		my $cmd= "$CMD -f $dest_file";
-			# my @PARAMS = (  "-f $line" );   
 			 my $res_do;
 		  eval {
 			   my $pid = open( my $README, "-|", $cmd )
@@ -129,10 +133,7 @@ post '/select' => sub {
                                 $res_do .= $_;
                             }
                            debug $res_do;
-
 			    };
-
-
             }
         }
     }
@@ -173,7 +174,7 @@ app->start;
 __DATA__
  
 @@ form.html.ep 
-  % layout 'mylayout', title => 'SNMP Emul';  
+  % layout 'mylayout', title => 'SNMP Emul ' , version => <%= $version %>;  
 <script language="javascript">
 function basename(path) 
 {
@@ -242,8 +243,7 @@ function check_enable()
   <div class="navbar navbar-fixed-top">
     <div class="navbar-inner">
       <div class="container">
-        <a class="btn btn-navbar" data-toggle="collapse" data-target=".nav-collapse"></a> <a class="brand" href="../">SNMP emulator</a>
-
+        <a class="btn btn-navbar" data-toggle="collapse" data-target=".nav-collapse"></a> <a class="brand" href="../">SNMP emulator configurator (version:<%= $version %>)</a>
         <div class="nav-collapse" id="main-menu">
           <div style="margin-left: 2em" class="nav" id="main-menu-left">
             <ul class="btn btn-navbar"></ul>
@@ -255,11 +255,12 @@ function check_enable()
   <div class="container">
     <section id="upload">
       <div class="container">
+      <br>
         <div class="span12">
-          <h2>SNMP emulator configuration</h2>
           <div class="span3"></div>
           <div class="span6">
-            <h3>Upload a new config file</h3>
+            <h3>Upload a new configuration file</h3>
+            <h4>( "MIB" or "snmpwalk -On" result or specific "agentx" file )</h4>
               <div class="form-horizontal">
                 %= form_for upload => (enctype => 'multipart/form-data') => begin
           	%= file_field 'example'
@@ -346,7 +347,7 @@ function check_enable()
 @@ layouts/mylayout.html.ep
   <!DOCTYPE html>
   <html>
-    <head><title><%= $title %></title>
+    <head><title><%= $title %> <%= $version %></title>
     <link href="/css/min.css" rel="stylesheet" type="text/css">
     </head>
     <body><%= content %></body>
@@ -354,7 +355,6 @@ function check_enable()
   
   
 @@ css/min.css.ep
-@import url('https://fonts.googleapis.com/css?family=Open+Sans:400italic,700italic,400,700');
 article,aside,details,figcaption,figure,footer,header,hgroup,nav,section{display:block;}
 audio,canvas,video{display:inline-block;*display:inline;*zoom:1;}
 audio:not([controls]){display:none;}
