@@ -60,7 +60,6 @@ if ( scalar keys %all_oid )
     say print_format_center( 'oid', 'next', 'type', 'val', 'do' );
     foreach $oid ( sort { sort_oid( $a, $b ) } keys %all_oid )
     {
-# $type = $all_oid{ $oid };
         $type = $redis->hget( 'type', $oid ) // '';
         $val  = $redis->hget( 'val',  $oid ) // '';
         $next = $redis->hget( 'next', $oid ) // '';
