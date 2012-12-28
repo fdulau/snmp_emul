@@ -24,7 +24,7 @@ use NetSNMP::agent::default_store ( ':all' );
 use SNMP;
 use Redis;
 
-my $VERSION = '2.09';
+my $VERSION = '2.10';
 my %opts;
 
 getopts( 'Dd:hv', \%opts );
