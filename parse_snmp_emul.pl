@@ -25,15 +25,17 @@ Getopt::Long::Configure( "bundling", "ignore_case" );
 
 use subs qw(say);
 
-my $VERSION = '1.19';
+my $VERSION = '1.22';
 
 my $enterprise_oid = '.1.3.6.1.4.1.';
-
+my @SKIP_OID       = qw( .1.3.6.1.4.1.8072 .1.3.6.1.4.1.2021  );
 my $file;
 my @Debug;
 my $DELETE = 0;
 my $help;
 my $version;
+my $flush;
+my $blank;
 
 GetOptions(
     'f=s' => \$file,
@@ -41,6 +43,8 @@ GetOptions(
     'D'   => \$DELETE,
     'h'   => \$help,
     'v'   => \$version,
+    'F'   => \$flush,
+    'b'   => \$blank,
 );
 
 if ( $version ) { print "$0 $VERSION \n"; exit; }
@@ -53,6 +57,8 @@ if ( $help )
     print "\t -h \t\t This help \n";
     print "\t -f file \t file to parse \n";
     print "\t -D \t\t delete the entries \n";
+    print "\t -F \t\t flush ALL entries from the DB \n";
+    print "\t -b \t\t blank run ( only debug and no real action on the DB ) \n";
     print "\t -d nbr \t debug level to show \n";
     print "\t\t\t could be repeated to show divers level\n";
     print "\t\t\t e.g. -d 0 -d 3 \n";
@@ -74,11 +80,19 @@ my $redis = Redis->new(
 
 $redis->select( 4 );    # use DB nbr 4
 
-my $all = io( $file )->chomp->slurp;
-if ( $all =~ /::=\s*\{\s*enterprises\s+(\d+)\s*\}/ )
+if ( $flush )
 {
-    $enterprise_full = $enterprise_oid . $1;
-    say "MIB file <$enterprise_full>" if ( exists $DEBUG{ 0 } );
+    $redis->flushdb();
+    exit if ( !$file );
+}
+
+my $all = io( $file )->chomp->slurp;
+
+# if ( $all =~ /::=\s*\{\s*enterprises\s+(\d+)\s*\}/ )
+if ( $all =~ /::=\s*\{\s+/ )
+{
+# $enterprise_full = $enterprise_oid . $1;
+# say "MIB file <$enterprise_full>" if ( exists $DEBUG{0} );
     parse_mib();
 }
 
@@ -151,7 +165,8 @@ sub parse_agentx
             $mib{ $oid }{ val }    = $Conf{ oid }{ $base_oid }{ index }{ $index_oid }{ val };
             $mib{ $oid }{ type }   = get_type( $Conf{ oid }{ $base_oid }{ index }{ $index_oid }{ type } );
             $mib{ $oid }{ access } = $Conf{ oid }{ $base_oid }{ index }{ $index_oid }{ access } // 'ro';
-            $mib{ $oid }{ do }     = $Conf{ oid }{ $base_oid }{ index }{ $index_oid }{ do } if ( exists $Conf{ oid }{ $base_oid }{ index }{ $index_oid }{ do } );
+            $mib{ $oid }{ do }     = $Conf{ oid }{ $base_oid }{ index }{ $index_oid }{ do }
+              if ( exists $Conf{ oid }{ $base_oid }{ index }{ $index_oid }{ do } );
         }
     }
 
@@ -159,7 +174,10 @@ sub parse_agentx
 
     foreach my $ent_full ( keys %enterprises_full )
     {
-        $redis->sadd( 'enterprise', $ent_full );
+        if ( !$blank )
+        {
+            $redis->sadd( 'enterprise', $ent_full );
+        }
         $mib{ $ent_full }{ next } = $sorted[ next_leaf( 0, \@sorted ) ];
     }
 
@@ -187,8 +205,8 @@ sub parse_agentx
 
     foreach my $ind ( 0 .. $#sorted )
     {
-        my $oid = $sorted[$ind];
-        my $next = next_leaf( $ind, \@sorted );
+        my $oid      = $sorted[$ind];
+        my $next     = next_leaf( $ind, \@sorted );
         my $next_oid = $sorted[$next] // '';
         $next_oid =~ /^$oid\.(\d+)/;
         my $sub_oid_ind = $1;
@@ -210,27 +228,32 @@ sub parse_agentx
         my $oid = $sorted[$ind];
         my $next = next_leaf( $ind, \@sorted );
         $mib{ $oid }{ next } = $sorted[$next] // '';
-        if ( $DELETE )
+        if ( !$blank )
         {
-            $redis->hdel( 'next',   $oid );
-            $redis->hdel( 'val',    $oid );
-            $redis->hdel( 'type',   $oid );
-            $redis->hdel( 'do',     $oid );
-            $redis->hdel( 'access', $oid );
-        }
-        else
-        {
-            $redis->hset( 'type',   $oid, $mib{ $oid }{ type }   // 0 );
-            $redis->hset( 'access', $oid, $mib{ $oid }{ access } // 'ro' );
-            $redis->hset( 'val',    $oid, $mib{ $oid }{ val }    // '' );
-            $redis->hset( 'do',   $oid, $mib{ $oid }{ do } ) if ( exists $mib{ $oid }{ do } );
-            $redis->hset( 'next', $oid, $sorted[$next] )     if ( $next <= $#sorted );
+            if ( $DELETE )
+            {
+                $redis->hdel( 'next',   $oid );
+                $redis->hdel( 'val',    $oid );
+                $redis->hdel( 'type',   $oid );
+                $redis->hdel( 'do',     $oid );
+                $redis->hdel( 'access', $oid );
+            }
+            else
+            {
+                $redis->hset( 'type',   $oid, $mib{ $oid }{ type }   // 0 );
+                $redis->hset( 'access', $oid, $mib{ $oid }{ access } // 'ro' );
+                $redis->hset( 'val',    $oid, $mib{ $oid }{ val }    // '' );
+                $redis->hset( 'do',     $oid, $mib{ $oid }{ do } )
+                  if ( exists $mib{ $oid }{ do } );
+                $redis->hset( 'next', $oid, $sorted[$next] )
+                  if ( $next <= $#sorted );
+            }
         }
     }
 
     foreach my $ent_full ( keys %enterprises_full )
     {
-        if ( $DELETE )
+        if ( $DELETE && !$blank )
         {
             $redis->srem( 'enterprise', $ent_full );
         }
@@ -267,13 +290,16 @@ sub parse_walk
     my @all_oid = sort { sort_oid( $a, $b ) } keys %mib;
     foreach my $ent_full ( keys %enterprises_full )
     {
-        if ( $DELETE )
+        if ( !$blank )
         {
-            $redis->srem( 'enterprise', $ent_full );
-        }
-        else
-        {
-            $redis->sadd( 'enterprise', $ent_full );
+            if ( $DELETE )
+            {
+                $redis->srem( 'enterprise', $ent_full );
+            }
+            else
+            {
+                $redis->sadd( 'enterprise', $ent_full );
+            }
         }
     }
 
@@ -284,12 +310,16 @@ sub parse_walk
         $mib{ $oid }{ next } = $sorted[ $ind + 1 ] // '';
         my $next = next_leaf( $ind, \@sorted );
         $mib{ $oid }{ next } = $sorted[$next];
-        if ( !$DELETE )
+        if ( !$blank )
         {
-            $redis->hset( 'type',   $oid, $mib{ $oid }{ type } );
-            $redis->hset( 'access', $oid, $mib{ $oid }{ access } );
-            $redis->hset( 'val',    $oid, $mib{ $oid }{ val } );
-            $redis->hset( 'next',   $oid, $sorted[$next] ) if ( $next <= $#sorted );
+            if ( !$DELETE )
+            {
+                $redis->hset( 'type',   $oid, $mib{ $oid }{ type } );
+                $redis->hset( 'access', $oid, $mib{ $oid }{ access } );
+                $redis->hset( 'val',    $oid, $mib{ $oid }{ val } );
+                $redis->hset( 'next',   $oid, $sorted[$next] )
+                  if ( $next <= $#sorted );
+            }
         }
     }
 
@@ -310,25 +340,29 @@ sub parse_walk
                 $new_oid .= '.' . $l;
                 $mib{ $new_oid }{ next } = $next;
                 say "<$o> <$new_oid> <$next>" if ( $DEBUG{ 4 } );
-                if ( !$DELETE )
+                if ( !$blank )
                 {
-                    $redis->hset( 'next', $new_oid, $next );
+                    if ( !$DELETE )
+                    {
+                        $redis->hset( 'next', $new_oid, $next );
+                    }
                 }
             }
         }
     }
-
-    if ( $DELETE )
+    if ( !$blank )
     {
-        foreach my $oid ( keys %mib )
+        if ( $DELETE )
         {
-            $redis->hdel( 'next',   $oid );
-            $redis->hdel( 'val',    $oid );
-            $redis->hdel( 'type',   $oid );
-            $redis->hdel( 'do',     $oid );
-            $redis->hdel( 'access', $oid );
+            foreach my $oid ( keys %mib )
+            {
+                $redis->hdel( 'next',   $oid );
+                $redis->hdel( 'val',    $oid );
+                $redis->hdel( 'type',   $oid );
+                $redis->hdel( 'do',     $oid );
+                $redis->hdel( 'access', $oid );
+            }
         }
-
     }
 
     say Dumper( \%mib )              if ( $DEBUG{ 2 } );
@@ -339,7 +373,6 @@ sub parse_walk
 
 sub parse_mib
 {
-    $redis->sadd( 'enterprise', $enterprise_full );
 
     my $base_folder = dirname( $file );
     &SNMP::addMibDirs( $base_folder );
@@ -351,7 +384,16 @@ sub parse_mib
 
     foreach my $oid ( keys( %SNMP::MIB ) )
     {
-        next if ( $oid !~ /^$enterprise_full/ );
+# next if ( $oid !~ /^$enterprise_full/ );
+        my $res = ( $oid =~ /^($enterprise_oid\d+)/ );
+        my $ent;
+        if ( $res )
+        {
+            $ent = $1;
+            next if ( qr/$ent/ ~~ @SKIP_OID );
+            $enterprises_full{ $ent } = '';
+            say "<$res> <$oid> <$ent>" if ( $DEBUG{ 6 } );
+        }
         my $type = $SNMP::MIB{ $oid }{ 'type' };
         my $access = $SNMP::MIB{ $oid }{ 'access' } // 'ro';
         if ( $DEBUG{ 4 } )
@@ -360,10 +402,12 @@ sub parse_mib
             print "\tTYPE=",  $SNMP::MIB{ $oid }{ 'type' },  "\n";
             print "\tLABEL=", $SNMP::MIB{ $oid }{ 'label' }, "\n";
             print "\tACCESS=", $SNMP::MIB{ $oid }{ 'access' } // 'RO', "\n";
-            print "\tDESCRIPTION=", $SNMP::MIB{ $oid }{ 'description' }, "\n" if ( defined $SNMP::MIB{ $oid }{ 'description' } );
+            print "\tDESCRIPTION=", $SNMP::MIB{ $oid }{ 'description' }, "\n"
+              if ( defined $SNMP::MIB{ $oid }{ 'description' } );
         }
         $mib{ $oid }{ type }   = get_type( $type );
         $mib{ $oid }{ access } = $access;
+
     }
 
     my @sorted = sort { sort_oid( $a, $b ) } keys %mib;
@@ -372,28 +416,45 @@ sub parse_mib
         my $oid = $sorted[$ind];
         my $next = next_leaf( $ind, \@sorted );
         $mib{ $oid }{ next } = $sorted[ $ind + 1 ] // '';
+        if ( !$blank )
+        {
+            if ( $DELETE )
+            {
+                $redis->hdel( 'next',   $oid );
+                $redis->hdel( 'val',    $oid );
+                $redis->hdel( 'type',   $oid );
+                $redis->hdel( 'do',     $oid );
+                $redis->hdel( 'access', $oid );
+            }
+            else
+            {
+                $redis->hset( 'type',   $oid, $mib{ $oid }{ type } );
+                $redis->hset( 'access', $oid, $mib{ $oid }{ access } );
+                $redis->hset( 'next',   $oid, $sorted[$next] )
+                  if ( $next <= $#sorted );
+            }
+        }
+    }
+    if ( !$blank )
+    {
         if ( $DELETE )
         {
-            $redis->hdel( 'next',   $oid );
-            $redis->hdel( 'val',    $oid );
-            $redis->hdel( 'type',   $oid );
-            $redis->hdel( 'do',     $oid );
-            $redis->hdel( 'access', $oid );
+            $redis->srem( 'enterprise', $enterprise_full );
         }
-        else
-        {
-            $redis->hset( 'type',   $oid, $mib{ $oid }{ type } );
-            $redis->hset( 'access', $oid, $mib{ $oid }{ access } );
-            $redis->hset( 'next',   $oid, $sorted[$next] ) if ( $next <= $#sorted );
-        }
-    }
-    if ( $DELETE )
-    {
-        $redis->srem( 'enterprise', $enterprise_full );
     }
 
-    say Dumper( \%mib )    if ( $DEBUG{ 3 } );
-    say Dumper( \@sorted ) if ( $DEBUG{ 1 } );
+    foreach my $ent_full ( keys %enterprises_full )
+    {
+        if ( !$blank )
+        {
+            $redis->sadd( 'enterprise', $ent_full );
+        }
+        $mib{ $ent_full }{ next } = $sorted[ next_leaf( 0, \@sorted ) ];
+    }
+
+    say Dumper( \%mib )              if ( $DEBUG{ 2 } );
+    say Dumper( \@sorted )           if ( $DEBUG{ 3 } );
+    say Dumper( \%enterprises_full ) if ( $DEBUG{ 1 } );
 }
 
 sub next_leaf
@@ -437,7 +498,7 @@ sub sort_oid
 sub get_type
 {
     my $type = shift;
-    my $asn  = 0;
+    my $asn  = ASN_OCTET_STR;
     if ( $type =~ /(OCTETSTR)|(STRING)/i )
     {
         $asn = ASN_OCTET_STR;
