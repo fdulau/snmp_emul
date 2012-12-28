@@ -1,0 +1,109 @@
+#!/bin/bash
+# ucd-snmp init file for snmpd
+#
+# chkconfig: - 50 50
+# description: Simple Network Management Protocol (SNMP) Daemon
+#
+# processname: /usr/local/bin/hypnotoad
+
+### BEGIN INIT INFO
+# Provides: snmp_emul_conf by hypnotoad
+# Required-Start: $local_fs $network
+# Required-Stop: $local_fs $network
+# Should-Start: 
+# Should-Stop: 
+# Default-Start: 
+# Default-Stop: 
+# Short-Description: start and stop hypnotoad configuration server for snmp_emul
+# Description: Mojolicious web server for config snmp_emul
+### END INIT INFO
+
+# source function library
+. /etc/init.d/functions
+
+
+OPTIONS="/opt/snmp_emul/bin/snmp_emul_config.pl"
+
+RETVAL=0
+prog="hypnotoad"
+binary=/usr/local/bin/hypnotoad
+pidfile=/var/run/snmp_emul_config.pid
+
+start() {
+        [ -x $binary ] || exit 5
+        echo -n $"Starting $prog: "
+        if [ $UID -ne 0 ]; then
+                RETVAL=1
+                failure
+        else
+                daemon --pidfile=$pidfile $binary $OPTIONS
+                RETVAL=$?
+                [ $RETVAL -eq 0 ] && touch /var/lock/subsys/snmp_emul_config
+        fi;
+        echo 
+        return $RETVAL
+}
+
+stop() {
+        echo -n $"Stopping $prog: "
+        if [ $UID -ne 0 ]; then
+                RETVAL=1
+                failure
+        else
+                $binary -s $OPTIONS
+                RETVAL=$?
+                [ $RETVAL -eq 0 ] && rm -f /var/lock/subsys/snmp_emul_config
+        fi;
+        echo
+        return $RETVAL
+}
+
+reload(){
+        echo -n $"Reloading $prog: "
+        killproc -p $pidfile $binary -HUP
+        RETVAL=$?
+        echo
+        return $RETVAL
+}
+
+restart(){
+	stop
+	start
+}
+
+condrestart(){
+    [ -e /var/lock/subsys/snmp_emul_config ] && restart
+    return 0
+}
+
+case "$1" in
+  start)
+	start
+	RETVAL=$?
+	;;
+  stop)
+	stop
+	RETVAL=$?
+	;;
+  restart)
+	restart
+	RETVAL=$?
+        ;;
+  reload|force-reload)
+	reload
+	RETVAL=$?
+        ;;
+  condrestart|try-restart)
+	condrestart
+	RETVAL=$?
+	;;
+  status)
+        status snmpd
+	RETVAL=$?
+        ;;
+  *)
+	echo $"Usage: $0 {start|stop|status|restart|condrestart|reload|force-reload}"
+	RETVAL=2
+esac
+
+exit $RETVAL
