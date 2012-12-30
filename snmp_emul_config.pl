@@ -1,91 +1,106 @@
 #!/usr/bin/perl
+##########################################################
+# snmp_emul
+# Gnu GPL2 license
+#
+# $Id: snmp_emul_config.pl 2 2011-07-12 09:32:07 fabrice $
+#
+# Fabrice Dulaunoy <fabrice@dulaunoy.com>
+# copyright 2011, 2012, 2013 Fabrice Dulaunoy
+###########################################################
 
 use Mojolicious::Lite;
 use IO::All;
 use File::Spec;
 use Data::Dumper;
-
 use subs qw( debug  list_dir);
 
+my $VERSION = '0.03';
 
-my $VERSION='0.02';
-
-my $LOG = '/tmp/mojo.log';
+####################### config section #######################
+my $PARSE            = 1;
+my $LISTEN           = 'http://*:8080';
+my $LOG              = '/tmp/mojo.log';
 my $BASE             = '/opt/snmp_emul/conf';
 my $AVAILABLE_FOLDER = 'available';
 my $ENABLED_FOLDER   = 'enabled';
-my $CMD = '/opt/snmp_emul/bin/parse_snmp_emul.pl';
+my $CMD              = '/opt/snmp_emul/bin/parse_snmp_emul.pl';
+##############################################################
 
 my $AVAILABLE_PATH = File::Spec->catfile( $BASE, $AVAILABLE_FOLDER );
 my $ENABLED_PATH   = File::Spec->catfile( $BASE, $ENABLED_FOLDER );
 
-
-my $DEBUG = shift;
-
-sub debug {
+sub debug
+{
     my $msg = shift;
-    if ( $DEBUG )
+    if ( $LOG )
     {
-    my ( $pkg, $file, $line, $sub ) = ( caller(0) )[ 0, 1, 2, 3 ];
-    if ( ref $msg ) {
-        $msg = "[$line] " . Dumper($msg);
-        chomp $msg;
+        my ( $pkg, $file, $line, $sub ) = ( caller( 0 ) )[ 0, 1, 2, 3 ];
+        if ( ref $msg )
+        {
+            $msg = "[$line] " . Dumper( $msg );
+            chomp $msg;
+        }
+        else
+        {
+            $msg = "[$line] " . $msg;
+        }
+        open LOG, '>>', $LOG;
+        print LOG "$msg\n";
+        close LOG;
     }
-    else {
-        $msg = "[$line] " . $msg;
-    }
-    open LOG, '>>', $LOG;
-    print LOG "$msg\n";
-    close LOG;
-  }
 }
 
-sub list_dir {
+sub list_dir
+{
     my $some_dir = shift;
     my $dis      = shift;
     my $tag      = 'en_';
-    if ($dis) {
+    if ( $dis )
+    {
         $tag = 'dis_';
     }
     my $res;
     opendir( my $dh, $some_dir ) || die "can't opendir $some_dir: $!";
-    my @dots = sort grep { -f "$some_dir/$_" } readdir($dh);
+    my @dots = sort grep { -f "$some_dir/$_" } readdir( $dh );
     closedir $dh;
-    foreach my $file_name (@dots) {
+    foreach my $file_name ( @dots )
+    {
         my $file = "$some_dir/$file_name";
-        $res .=
-            '<option name="opt" id="'
-          . $tag
-          . $file_name
-          . '" value="'
-          . $file . '" >'
-          . $file_name
-          . "</option>\n";
+        $res .= '<option name="opt" id="' . $tag . $file_name . '" value="' . $file . '" >' . $file_name . "</option>\n";
     }
-    $res .=
-      '<option name="opt" id="' . $tag . 'empty" value="" >' . "</option>\n";
+    $res .= '<option name="opt" id="' . $tag . 'empty" value="" >' . "</option>\n";
     return $res;
 }
 
-my $available = list_dir($AVAILABLE_PATH);
+my $available = list_dir( $AVAILABLE_PATH );
 my $enabled = list_dir( $ENABLED_PATH, 1 );
 
-app->config( hypnotoad => { listen => ['http://*:8080']  , pid_file => '/var/run/snmp_emul_config.pid' ,  inactivity_timeout => 60 } );
+app->config(
+    hypnotoad => {
+        listen             => [$LISTEN],
+        pid_file           => '/var/run/snmp_emul_config.pid',
+        inactivity_timeout => 60
+    }
+);
 
-app->secret('Fab pass');
+app->secret( 'Fab pass' );
 
 # Upload form in DATA section
 get '/' => sub {
     my $self = shift;
-    $available = list_dir($AVAILABLE_PATH);
+    $available = list_dir( $AVAILABLE_PATH );
     $enabled = list_dir( $ENABLED_PATH, 1 );
     $self->stash( list_available => $available );
     $self->stash( list_enable    => $enabled );
-    $self->stash( version => $VERSION );
+    $self->stash( version        => $VERSION );
 
 } => 'form';
 
-get '/css/min.css' => { template => 'css/min', format => 'css' } => 'min-css';
+get '/css/min.css' => {
+    template => 'css/min',
+    format   => 'css'
+} => 'min-css';
 
 get '/redir' => 'redir';
 
@@ -94,46 +109,56 @@ post '/select' => sub {
     my $self = shift;
     my $name;
 
-    foreach my $line ( @{ $self->tx->req->params->params } ) {
-        if ( $line =~ /^$BASE/ ) {
-            if ( $line =~ /^$ENABLED_PATH\/*(.*)/ ) {
+    foreach my $line ( @{ $self->tx->req->params->params } )
+    {
+        if ( $line =~ /^$BASE/ )
+        {
+            if ( $line =~ /^$ENABLED_PATH\/*(.*)/ )
+            {
                 $name = $1;
                 my $source_file = File::Spec->catfile( $AVAILABLE_PATH, $name );
-		debug "UNLINK=$line <$name> <$source_file>";
-                if ( -l $line ) {
-                    debug "unlink result:".unlink $line;   
-		    my $cmd = "$CMD -D -f $source_file";
-		     my $res_do;
-		    eval {
-		    
-                   my $pid = open( my $README, "-|", $cmd )
+                debug "UNLINK=$line <$name> <$source_file>";
+                if ( -l $line )
+                {
+                    debug "unlink result:" . unlink $line;
+                    if ( $PARSE )
+                    {
+                        my $cmd = "$CMD -D -f $source_file";
+                        my $res_do;
+                        eval {
+
+                            my $pid = open( my $README, "-|", $cmd )
                               or debug "Couldn't fork: $! <$cmd>";
 
                             while ( <$README> )
                             {
                                 $res_do .= $_;
                             }
-                           debug $res_do;
-
-			   };
+                            debug $res_do;
+                        };
+                    }
                 }
             }
-            if ( $line =~ /^$AVAILABLE_PATH\/*(.*)/ ) {
+            if ( $line =~ /^$AVAILABLE_PATH\/*(.*)/ )
+            {
                 $name = $1;
                 my $dest_file = File::Spec->catfile( $ENABLED_PATH, $name );
-                debug "symlink result:".symlink( $line, $dest_file );
-		my $cmd= "$CMD -f $dest_file";
-			 my $res_do;
-		  eval {
-			   my $pid = open( my $README, "-|", $cmd )
-                              or debug "Couldn't fork: $! <$cmd>";
+                debug "symlink result:" . symlink( $line, $dest_file );
+                if ( $PARSE )
+                {
+                    my $cmd = "$CMD -f $dest_file";
+                    my $res_do;
+                    eval {
+                        my $pid = open( my $README, "-|", $cmd )
+                          or debug "Couldn't fork: $! <$cmd>";
 
-                            while ( <$README> )
-                            {
-                                $res_do .= $_;
-                            }
-                           debug $res_do;
-			    };
+                        while ( <$README> )
+                        {
+                            $res_do .= $_;
+                        }
+                        debug $res_do;
+                    };
+                }
             }
         }
     }
@@ -144,29 +169,36 @@ post '/upload' => sub {
 
     my $self = shift;
 
-    # Check file size
-    return $self->render( text => 'File is too big.', status => 200 )
-      if $self->req->is_limit_exceeded;
+# Check file size
+    return $self->render(
+        text   => 'File is too big.',
+        status => 200
+    ) if $self->req->is_limit_exceeded;
 
-    # Process uploaded file
+# Process uploaded file
 
-    if ( $self->param('example') ) {
-        my $example = $self->param('example');
+    if ( $self->param( 'example' ) )
+    {
+        my $example = $self->param( 'example' );
         my $size    = $example->size;
         my $name    = $example->filename;
 
-        $example->move_to(
-            File::Spec->catfile( $AVAILABLE_PATH, $example->filename ) );
+        $example->move_to( File::Spec->catfile( $AVAILABLE_PATH, $example->filename ) );
 
-        $self->render( 'redir', size => $size, name => $name );
+        $self->render(
+            'redir',
+            size => $size,
+            name => $name
+        );
     }
-    if ( $self->param('bt_enable') ) {
-        debug( "enable with" . Dumper( $self->param('bt_enable') ) );
+    if ( $self->param( 'bt_enable' ) )
+    {
+        debug( "enable with" . Dumper( $self->param( 'bt_enable' ) ) );
     }
 
-    $available = list_dir($AVAILABLE_PATH);
+    $available = list_dir( $AVAILABLE_PATH );
     $enabled = list_dir( $ENABLED_PATH, 1 );
-    return $self->redirect_to('form');
+    return $self->redirect_to( 'form' );
 };
 
 app->start;
