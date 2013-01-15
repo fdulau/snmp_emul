@@ -29,7 +29,7 @@ use subs qw(say);
 
 my $VERSION = '1.25';
 
-my $enterprise_oid = '.1.3.6.1.4.1.';
+my $enterprise_oid = '.1.3.6.1.(2|4).1.';
 my @SKIP_OID       = qw( .1.3.6.1.4.1.8072 .1.3.6.1.4.1.2021  );
 my $file;
 my @Debug;
@@ -282,8 +282,9 @@ sub parse_walk
         $mib{ $oid }{ type }   = $type;
         $mib{ $oid }{ val }    = $val;
         $mib{ $oid }{ access } = 'ro';
-
-        my $res = ( $oid =~ /^($enterprise_oid\d+)/ );
+        my $tmp = $enterprise_oid;
+        $tmp =~ s/\./\\./g;
+        my $res = ( $oid =~ /^($tmp\d+)/ );
         my $ent = $1;
         $enterprises_full{ $ent } = '';
         say "<$res> [$line]  <$oid> <$type>  <$val>" if ( $DEBUG{ 4 } );
