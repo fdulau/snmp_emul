@@ -18,14 +18,17 @@ use SNMP;
 use Redis;
 use File::Basename;
 use NetSNMP::ASN qw(:all);
+use NetSNMP::OID;
 use Config::General;
 use IO::All;
 use Getopt::Long;
+use String::LCSS_XS qw(lcss);
+
 Getopt::Long::Configure( "bundling", "ignore_case" );
 
 use subs qw(say);
 
-my $VERSION = '1.22';
+my $VERSION = '1.24';
 
 my $enterprise_oid = '.1.3.6.1.4.1.';
 my @SKIP_OID       = qw( .1.3.6.1.4.1.8072 .1.3.6.1.4.1.2021  );
@@ -287,9 +290,11 @@ sub parse_walk
         say "<$res> [$line]  <$oid> <$type>  <$val>" if ( $DEBUG{ 4 } );
     }
 
-    my @all_oid = sort { sort_oid( $a, $b ) } keys %mib;
     foreach my $ent_full ( keys %enterprises_full )
     {
+        $mib{ $ent_full }{ type }   = 0;
+        $mib{ $ent_full }{ access } = 'ro';
+        $mib{ $ent_full }{ val }    = '';
         if ( !$blank )
         {
             if ( $DELETE )
@@ -303,13 +308,30 @@ sub parse_walk
         }
     }
 
-    my @sorted = sort { sort_oid( $a, $b ) } keys %mib;
-    foreach my $ind ( 0 .. $#sorted )
+    my @all_oid = sort { sort_oid( $a, $b ) } keys %mib;
+    foreach my $ind ( 0 .. $#all_oid )
     {
-        my $oid = $sorted[$ind];
-        $mib{ $oid }{ next } = $sorted[ $ind + 1 ] // '';
-        my $next = next_leaf( $ind, \@sorted );
-        $mib{ $oid }{ next } = $sorted[$next];
+        my $oid = $all_oid[$ind];
+        my $next = $all_oid[ $ind + 1 ] // '';
+
+        my $longest = $next;
+        $longest =~ s/\.\d+$//;
+        if ( !exists $mib{ $longest } )
+        {
+            say "<$oid> <$next> <$longest>";
+            $mib{ $longest }{ type }   = 0;
+            $mib{ $longest }{ access } = 'ro';
+            $mib{ $longest }{ val }    = '';
+
+        }
+##     $mib{ $oid }{ next } = $all_oid[ $ind + 1 ] // '';
+    }
+    my @all_oid = sort { sort_oid( $a, $b ) } keys %mib;
+    foreach my $ind ( 0 .. $#all_oid )
+    {
+        my $oid = $all_oid[$ind];
+        my $next = next_leaf( $ind, \@all_oid );
+        $mib{ $oid }{ next } = $all_oid[$next];
         if ( !$blank )
         {
             if ( !$DELETE )
@@ -317,15 +339,15 @@ sub parse_walk
                 $redis->hset( 'type',   $oid, $mib{ $oid }{ type } );
                 $redis->hset( 'access', $oid, $mib{ $oid }{ access } );
                 $redis->hset( 'val',    $oid, $mib{ $oid }{ val } );
-                $redis->hset( 'next',   $oid, $sorted[$next] )
-                  if ( $next <= $#sorted );
+                $redis->hset( 'next',   $oid, $all_oid[$next] )
+                  if ( $next <= $#all_oid );
             }
         }
     }
 
     foreach my $o ( @all_oid )
     {
-        next if ( !exists $mib{ $o }{ next } || !defined $mib{ $o }{ next } );
+        next if ( !exists $mib{ $o }{ next } || !defined $mib{ $o }{ next } || !$o );
         my $next = $mib{ $o }{ next };
 
         if ( $next =~ /^$o\.(.*)/ )
@@ -340,6 +362,7 @@ sub parse_walk
                 $new_oid .= '.' . $l;
                 $mib{ $new_oid }{ next } = $next;
                 say "<$o> <$new_oid> <$next>" if ( $DEBUG{ 4 } );
+                say "***** <$o> <$new_oid> <$next>";
                 if ( !$blank )
                 {
                     if ( !$DELETE )
@@ -478,20 +501,24 @@ sub next_leaf
 
 sub sort_oid
 {
-    my $o1 = shift;
-    my $o2 = shift;
-    $o1 =~ s/^\.//;
-    $o2 =~ s/^\.//;
-    my @O1 = split /\./, $o1;
-    my @O2 = split /\./, $o2;
-    my @b = $#O1 < $#O2 ? @O2 : @O1;
-    foreach my $i ( 0 .. $#b )
+    my $oi1 = shift;
+    my $oi2 = shift;
+    return 1 if ( $oi1 !~ /^\.1/ || $oi2 !~ /^\.1/ );
+    $oi1 =~ s/\.$//;
+    $oi2 =~ s/\.$//;
+    my $o1 = new NetSNMP::OID( $oi1 );
+    my $o2 = new NetSNMP::OID( $oi2 );
+    if ( $o1 > $o2 )
     {
-        no warnings;
-        my $res = ( $O1[$i] <=> $O2[$i] );
-        use warnings;
-        next if ( $res == 0 );
-        return $res;
+        return 1;
+    }
+    elsif ( $o1 < $o2 )
+    {
+        return -1;
+    }
+    else
+    {
+        return 0;
     }
 }
 
