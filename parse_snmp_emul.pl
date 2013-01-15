@@ -317,7 +317,6 @@ sub parse_walk
         $longest =~ s/\.\d+$//;
         if ( !exists $mib{ $longest } )
         {
-            say "<$oid> <$next> <$longest>";
             $mib{ $longest }{ type }   = 0;
             $mib{ $longest }{ access } = 'ro';
             $mib{ $longest }{ val }    = '';
@@ -325,7 +324,8 @@ sub parse_walk
         }
 ##     $mib{ $oid }{ next } = $all_oid[ $ind + 1 ] // '';
     }
-    my @all_oid = sort { sort_oid( $a, $b ) } keys %mib;
+    
+    @all_oid = sort { sort_oid( $a, $b ) } keys %mib;
     foreach my $ind ( 0 .. $#all_oid )
     {
         my $oid = $all_oid[$ind];
@@ -361,7 +361,6 @@ sub parse_walk
                 $new_oid .= '.' . $l;
                 $mib{ $new_oid }{ next } = $next;
                 say "<$o> <$new_oid> <$next>" if ( $DEBUG{ 4 } );
-                say "***** <$o> <$new_oid> <$next>";
                 if ( !$blank )
                 {
                     if ( !$DELETE )
