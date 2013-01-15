@@ -17,7 +17,7 @@ use Redis;
 
 use subs qw( debug  list_dir);
 
-my $VERSION = '0.06';
+my $VERSION = '0.07';
 
 ####################### config section #######################
 my $PARSE            = 1;
@@ -36,6 +36,9 @@ my $redis = Redis->new(
 );
 
 $redis->select( 4 );    # use DB nbr 4 ( why not !!!)
+
+my $enterprise_option = fetch_enterprise();
+
 my %ASN_TYPE = (
 
     1  => 'BOOLEAN',
@@ -110,6 +113,17 @@ sub list_dir
 my $available = list_dir( $AVAILABLE_PATH );
 my $enabled = list_dir( $ENABLED_PATH, 1 );
 
+sub fetch_enterprise
+{
+    my @enterprises = $redis->smembers( 'enterprise' );
+    my $res;
+    foreach my $ent ( @enterprises )
+    {
+        $res .= '<option name="opt" id="' . $ent . '" value="' . $ent . '" >' . $ent . "</option>\n";
+    }
+    return $res;
+}
+
 app->config(
     hypnotoad => {
         listen             => [$LISTEN],
@@ -123,16 +137,18 @@ app->secret( 'Fab pass' );
 # Upload form in DATA section
 get '/' => sub {
     my $self = shift;
-    $available = list_dir( $AVAILABLE_PATH );
-    $enabled = list_dir( $ENABLED_PATH, 1 );
+    $available         = list_dir( $AVAILABLE_PATH );
+    $enabled           = list_dir( $ENABLED_PATH, 1 );
+    $enterprise_option = fetch_enterprise();
     $self->stash( list_available => $available );
     $self->stash( list_enable    => $enabled );
     $self->stash( version        => $VERSION );
     $self->stash( oid            => $oid );
     $self->stash( val            => $val );
     $self->stash( type           => $type );
+    $self->stash( type_str       => $ASN_TYPE{ $type } );
+    $self->stash( enterprise     => $enterprise_option );
 
-    $self->stash( type_str => $ASN_TYPE{ $type } );
 } => 'form';
 
 get '/css/min.css' => {
@@ -164,7 +180,7 @@ post '/change' => sub {
             $redis->hset( 'val', $oid, $val );
             $val  = '';
             $type = '';
-            $oid  =$DEFAULT_OID;
+            $oid  = $DEFAULT_OID;
         }
     }
 } => 'change';
@@ -411,7 +427,7 @@ function flush()
         </div>
       </div>
     </div>
-  </div
+  </div>
   <div class="container">
     <section id="upload">
       <div class="container">
@@ -430,11 +446,22 @@ function flush()
             </div>
           </div>
         </div>
-      </div>
+     
     </section>
   </div>
   <hr>  
-  
+   
+   <div class="container">
+    <section id="enterprise_form">
+    <form action="/enterprise" method="POST" name="enterprise" id="enterprise"> 
+     <select >
+    <%== $enterprise %>
+    </select>
+    </form>
+        </section>
+  </div>
+  <hr>
+    
    <div class="container">
     <section id="change_val">
      <form action="/change" method="POST" name="change" id="change">
@@ -478,7 +505,7 @@ function flush()
   
   
   <div class="container">
-     <section id="upload">
+     <section id="abelizer">
        <div class="container">
          <form action="/select" method="POST" name="able" id="able">
          <input type="hidden" id="status" name="status" value="undef">
@@ -523,8 +550,9 @@ function flush()
 <%== $list_enable %>
                </select> 
              </div>
+             </div>
            </form>
-         </div>	
+        
        </div>
      </section>
   </div>	
