@@ -12,12 +12,12 @@
 
 use strict;
 use warnings;
-
+use NetSNMP::OID;
 use Data::Dumper;
 
 use Redis;
 
-my $VERSION = '0.07';
+my $VERSION = '0.08';
 
 my $REDIS = '127.0.0.1:6379';
 my $redis = Redis->new(
@@ -51,8 +51,9 @@ my %all_oid = ( %all_next ,  %all_type);
 if ( scalar keys %all_oid)
 {
     my $l_oid  = length( ( sort { length $a <=> length $b } keys %all_oid )[-1] );
-    my $l_type = length( ( sort { length $a <=> length $b } values %all_type )[-1] );
-
+    #my $l_type = length( ( sort { length $a <=> length $b } values %all_type )[-1] );
+    my $l_type = 4;
+     
     my %all_val = $redis->hgetall( 'val' );
     my $l_val = length( ( sort { length $a <=> length $b } values %all_val )[-1] );
 
@@ -140,21 +141,44 @@ sub say
     print "$msg\n";
 }
 
+#sub sort_oid
+#{
+#    my $o1 = shift;
+#    my $o2 = shift;
+#    $o1 =~ s/^\.//;
+#    $o2 =~ s/^\.//;
+#    my @O1 = split /\./, $o1;
+#    my @O2 = split /\./, $o2;
+#    my @b = $#O1 < $#O2 ? @O2 : @O1;
+#    foreach my $i ( 0 .. $#b )
+#    {
+#        no warnings;
+#        my $res = ( $O1[$i] <=> $O2[$i] );
+#        use warnings;
+#        next if ( $res == 0 );
+#        return $res;
+#    }
+#}
+
 sub sort_oid
 {
-    my $o1 = shift;
-    my $o2 = shift;
-    $o1 =~ s/^\.//;
-    $o2 =~ s/^\.//;
-    my @O1 = split /\./, $o1;
-    my @O2 = split /\./, $o2;
-    my @b = $#O1 < $#O2 ? @O2 : @O1;
-    foreach my $i ( 0 .. $#b )
+    my $oi1 = shift;
+    my $oi2 = shift;
+    return 1 if ( $oi1 !~ /^\.1/ || $oi2 !~ /^\.1/ );
+    $oi1 =~ s/\.$//;
+    $oi2 =~ s/\.$//;
+    my $o1 = new NetSNMP::OID( $oi1 );
+    my $o2 = new NetSNMP::OID( $oi2 );
+    if ( $o1 > $o2 )
     {
-        no warnings;
-        my $res = ( $O1[$i] <=> $O2[$i] );
-        use warnings;
-        next if ( $res == 0 );
-        return $res;
+        return 1;
+    }
+    elsif ( $o1 < $o2 )
+    {
+        return -1;
+    }
+    else
+    {
+        return 0;
     }
 }
