@@ -27,7 +27,7 @@ Getopt::Long::Configure( "bundling", "ignore_case" );
 
 use subs qw(say);
 
-my $VERSION = '1.24';
+my $VERSION = '1.25';
 
 my $enterprise_oid = '.1.3.6.1.4.1.';
 my @SKIP_OID       = qw( .1.3.6.1.4.1.8072 .1.3.6.1.4.1.2021  );
@@ -129,7 +129,7 @@ if ( $@ )
     exit;
 }
 
-say \%Conf if ( exists $DEBUG{ 5 } );
+say \%Conf if ( exists $DEBUG{ 6 } );
 
 my $agentx = 0;
 if ( ( ref $Conf{ oid } ) eq 'HASH' && scalar keys %{ $Conf{ oid } } )
@@ -312,9 +312,10 @@ sub parse_walk
     {
         my $oid = $all_oid[$ind];
         my $next = $all_oid[ $ind + 1 ] // '';
-
+        next unless (  $next);
         my $longest = $next;
         $longest =~ s/\.\d+$//;
+	say "<$oid> <$next> <$longest>" if ( $DEBUG{ 5 } );
         if ( !exists $mib{ $longest } )
         {
             $mib{ $longest }{ type }   = 0;
