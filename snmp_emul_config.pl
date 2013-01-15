@@ -17,7 +17,7 @@ use Redis;
 
 use subs qw( debug  list_dir);
 
-my $VERSION = '0.05';
+my $VERSION = '0.06';
 
 ####################### config section #######################
 my $PARSE            = 1;
@@ -28,6 +28,7 @@ my $AVAILABLE_FOLDER = 'available';
 my $ENABLED_FOLDER   = 'enabled';
 my $CMD              = '/opt/snmp_emul/bin/parse_snmp_emul.pl';
 my $REDIS            = '127.0.0.1:6379';
+my $DEFAULT_OID      = '.1.3.6.1.4.1.';
 ##############################################################
 my $redis = Redis->new(
     server => $REDIS,
@@ -59,7 +60,7 @@ my %ASN_TYPE = (
 
 my $AVAILABLE_PATH = File::Spec->catfile( $BASE, $AVAILABLE_FOLDER );
 my $ENABLED_PATH   = File::Spec->catfile( $BASE, $ENABLED_FOLDER );
-my $oid            = '.1.3.6.1.2.1.';
+my $oid            = $DEFAULT_OID;
 my $val;
 my $type;
 
@@ -163,7 +164,7 @@ post '/change' => sub {
             $redis->hset( 'val', $oid, $val );
             $val  = '';
             $type = '';
-            $oid  = '.1.3.6.1.2.1.';
+            $oid  =$DEFAULT_OID;
         }
     }
 } => 'change';
