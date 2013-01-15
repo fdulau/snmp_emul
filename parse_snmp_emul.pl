@@ -22,7 +22,6 @@ use NetSNMP::OID;
 use Config::General;
 use IO::All;
 use Getopt::Long;
-use String::LCSS_XS qw(lcss);
 
 Getopt::Long::Configure( "bundling", "ignore_case" );
 
