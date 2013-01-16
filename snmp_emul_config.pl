@@ -14,10 +14,11 @@ use IO::All;
 use File::Spec;
 use Data::Dumper;
 use Redis;
+use NetSNMP::OID;
 
 use subs qw( debug  list_dir);
 
-my $VERSION = '0.07';
+my $VERSION = '0.08';
 
 ####################### config section #######################
 my $PARSE            = 1;
@@ -29,6 +30,7 @@ my $ENABLED_FOLDER   = 'enabled';
 my $CMD              = '/opt/snmp_emul/bin/parse_snmp_emul.pl';
 my $REDIS            = '127.0.0.1:6379';
 my $DEFAULT_OID      = '.1.3.6.1.4.1.';
+my $enterprise_oid   = '.1.3.6.1.(2|4).1.';
 ##############################################################
 my $redis = Redis->new(
     server => $REDIS,
@@ -38,6 +40,7 @@ my $redis = Redis->new(
 $redis->select( 4 );    # use DB nbr 4 ( why not !!!)
 
 my $enterprise_option = fetch_enterprise();
+my $oids_option       = fetch_oids();
 
 my %ASN_TYPE = (
 
@@ -66,6 +69,8 @@ my $ENABLED_PATH   = File::Spec->catfile( $BASE, $ENABLED_FOLDER );
 my $oid            = $DEFAULT_OID;
 my $val;
 my $type;
+my $oids_option_ent;
+my $selected_ent;
 
 sub debug
 {
@@ -115,13 +120,90 @@ my $enabled = list_dir( $ENABLED_PATH, 1 );
 
 sub fetch_enterprise
 {
+  
     my @enterprises = $redis->smembers( 'enterprise' );
-    my $res;
+    my $res         = '<option name="opt" id="empty" value="" >' . "</option>\n";
+
     foreach my $ent ( @enterprises )
     {
+    if ( $selected_ent eq $ent )
+    {
+      $res .= '<option selected name="opt" id="' . $ent . '" value="' . $ent . '" >' . $ent . "</option>\n";
+    
+    }else{
         $res .= '<option name="opt" id="' . $ent . '" value="' . $ent . '" >' . $ent . "</option>\n";
+	}
+
     }
     return $res;
+}
+
+sub fetch_oids
+{
+
+    my %enterprises = map { $_ => [] } $redis->smembers( 'enterprise' );
+
+    my %enterprises_option;
+
+  #  my %all_next = $redis->hgetall( 'next' );
+    my %all_type = $redis->hgetall( 'type' );
+    my %all_oid;
+foreach my $t ( keys  %all_type )
+{
+next if ( $all_type{$t} == 0 );
+$all_oid{$t}=$all_type{$t};
+
+}
+## merge all_next and all_type to get all oid in all case( oops, a lot of all in that comment ) ##
+
+   # my %all_oid = ( %all_next, %all_type );
+# my %all_oid =  grep { $_[1] != 0 } each $redis->hgetall( 'type' );
+
+    my @all_oids = sort { sort_oid( $a, $b ) } keys %all_oid;
+
+    foreach my $oid ( @all_oids )
+    {
+        my $tmp = $enterprise_oid;
+        $tmp =~ s/\./\\./g;
+        my $res = ( $oid =~ /^($tmp\d+)/ );
+        my $ent = $1;
+        push $enterprises{ $ent }, $oid;
+    }
+    foreach my $ent ( keys %enterprises )
+    {
+        my $res;
+        foreach my $oid ( @{ $enterprises{ $ent } } )
+        {
+            $res .= '<option name="oids" id="' . $oid . '" value="' . $oid . '" >' . $oid . "</option>\n";
+
+        }
+        $enterprises_option{ $ent } = $res;
+    }
+
+    return ( \%enterprises_option );
+}
+
+sub sort_oid
+{
+    my $oi1 = shift;
+    my $oi2 = shift;
+    return 1 if ( $oi1 !~ /^\.1/ || $oi2 !~ /^\.1/ );
+    $oi1 =~ s/\.$//;
+    $oi2 =~ s/\.$//;
+    my $o1 = new NetSNMP::OID( $oi1 );
+    my $o2 = new NetSNMP::OID( $oi2 );
+    if ( $o1 > $o2 )
+    {
+        return 1;
+    }
+    elsif ( $o1 < $o2 )
+    {
+        return -1;
+    }
+    else
+    {
+        return 0;
+    }
 }
 
 app->config(
@@ -148,6 +230,7 @@ get '/' => sub {
     $self->stash( type           => $type );
     $self->stash( type_str       => $ASN_TYPE{ $type } );
     $self->stash( enterprise     => $enterprise_option );
+    $self->stash( oids           => $oids_option_ent );
 
 } => 'form';
 
@@ -156,7 +239,38 @@ get '/css/min.css' => {
     format   => 'css'
 } => 'min-css';
 
-get '/redir'   => 'redir';
+get '/redir' => 'redir';
+
+post '/enterprise' => sub {
+    my $self = shift;
+    debug( $self->tx->req->params );
+    while ( my $line = shift @{ $self->tx->req->params->params } )
+    {
+        my $param = shift @{ $self->tx->req->params->params };
+        debug "in ENTERPRISE <$line>";
+        if ( $line eq 'sel_enterprise' && $param )
+        {
+            debug "in ENT =" .$param;
+          $selected_ent =$param ;
+
+            $oids_option     = fetch_oids();
+            $oids_option_ent = $oids_option->{ $selected_ent };
+
+        }
+	if ( $line eq 'sel_enterprise_oid' && $param )
+        {
+            debug "in ENT oid =" .$param;
+           $oid = $param;
+            if ( $redis->hexists( 'type', $oid ) )
+            {
+                $type = $redis->hget( 'type', $oid ) // '';
+                $val  = $redis->hget( 'val',  $oid ) // '';
+            }
+debug "<$oid> <$type> <$val>";
+        }
+    }
+} => 'enterprise';
+
 post '/change' => sub {
     my $self = shift;
 
@@ -416,147 +530,199 @@ function flush()
 } 
 </script>
 
-  <div class="navbar navbar-fixed-top">
+	
+   <div class="navbar navbar-fixed-top">
     <div class="navbar-inner">
       <div class="container">
-        <a class="btn btn-navbar" data-toggle="collapse" data-target=".nav-collapse"></a> <a class="brand" href="http://www.menolly.be/snmp_emul/" target="_blank">SNMP emulator configurator (version:<%== $version %>)</a>
+        <a class="btn btn-navbar" data-toggle="collapse"
+        data-target=".nav-collapse"></a> <a class="brand" href=
+        "http://www.menolly.be/snmp_emul/" target="_blank">SNMP
+        emulator configurator (version:<%== $version %>)</a>
+
         <div class="nav-collapse" id="main-menu">
-          <div style="margin-left: 2em" class="nav" id="main-menu-left">
+          <div style="margin-left: 2em" class="nav" id=
+          "main-menu-left">
             <ul class="btn btn-navbar"></ul>
           </div>
         </div>
       </div>
     </div>
   </div>
+
   <div class="container">
-    <section id="upload">
-      <div class="container">
-      <br>
-        <div class="span12">
-          <div class="span1"></div>
-          <div class="span9" >
-            <h3 style="margin-left:150px">Upload a new configuration file</h3>
-            <h4 style="margin-left:150px">( "MIB" or "snmpwalk -On" result or specific "agentx" file )</h4>
-              <div style="margin-left:20px;" >
-                %= form_for upload => ( enctype => 'multipart/form-data'  ) => begin
-          	%= file_field 'file'  => (size => '55'  )
-          	%= submit_button 'Upload'
-         	% end
-     	      </div>
-            </div>
+    <section id="upload"></section>
+
+    <div class="container">
+      <section id="upload"><br></section>
+
+      <div class="span12">
+        <section id="upload"></section>
+
+        <div class="span1">
+          <section id="upload"></section>
+        </div>
+
+        <div class="span9">
+          <section id="upload"></section>
+
+          <h3 style="margin-left:150px"><section id="upload">Upload
+          a new configuration file</section></h3>
+
+          <h4 style="margin-left:150px"><section id="upload">(
+          "MIB" or "snmpwalk -On" result or specific "agentx" file
+          )</section></h4>
+
+          <div style="margin-left:20px;">
+            %= form_for upload => ( enctype => 'multipart/form-data'  ) => begin
+            %= file_field 'file'  => (size => '55'  )
+            %= submit_button 'Upload'
+            % end
           </div>
         </div>
-     
-    </section>
-  </div>
-  <hr>  
-   
-   <div class="container">
-    <section id="enterprise_form">
-    <form action="/enterprise" method="POST" name="enterprise" id="enterprise"> 
-     <select >
-    <%== $enterprise %>
-    </select>
-    </form>
-        </section>
+      </div>
+    </div>
   </div>
   <hr>
-    
-   <div class="container">
-    <section id="change_val">
-     <form action="/change" method="POST" name="change" id="change">
-      <div class="span12">		
-        <div class="span_frame5 pagination-centered">
-          <button type="button" name="bt_oid" id="bt_oid" onclick="this.form.submit();">
-            Get OID
-          </button>
-          <div  >
-            <input type="text" name="oid" id="oid" value="<%== $oid %>" style="width:363px;">
-          </div>
-        </div>
-        <div class="span1">
-          <div>
-            <center>Type</center> 
-          </div>
-          <div>  
-            <center><%== $type %></center> 
-          </div>
-          <div >
-            <center><%== $type_str %></center> 
-          </div>
-        </div>
-  
-        <div class="span_frame5 pagination-centered">
-          <button type="button" name="bt_oid_val" id="bt_oid_val" onclick="this.form.submit();">
-            Set value
-          </button>
-          <div  >
-            <input type="text" name="oid_val" id="oid_val"  value="<%== $val %>" style="width:363px;">
-          </div>
-        </div>
-      </div>  
-     </form>
-    </section>
-  </div>
-  <hr>   
-  
-  
-  
-  
-  
+
   <div class="container">
-     <section id="abelizer">
-       <div class="container">
-         <form action="/select" method="POST" name="able" id="able">
-         <input type="hidden" id="status" name="status" value="undef">
-           <div class="span12">		
-             <div class="span_frame5 pagination-centered">
-               <div>
-                 Available
-               </div>
-               <select multiple name="sel_available" id="sel_available" size=20 style="width:365px;" onchange="check_enable();">
-<%== $list_available %>
-               </select> 
-             </div>			
-             <div class="span1 pagination-centered">
-               <div >
-                 &nbsp;
-                 &nbsp;
-               </div>	
-               <button style="margin-top:50px" type="button" name="bt_able" id="bt_able" onclick="this.form.submit();">
-                <img src="/double_arrow.png">
-               </button>
-               <div>
-                 &nbsp;
-                 &nbsp;
-               </div>	
-                <button style="margin-top:30px" type="button" name="bt_refresh" id="bt_refresh" onclick="reload();">
-                  <img src="/refresh.png">
-                </button>
-                <div>
-                  &nbsp;
-                  &nbsp;
-                </div>	
-                <button style="margin-top:30px" type="button" name="bt_flush" id="bt_flush" onclick="flush();">
-                  <img src="/flush.png">
-                </button>             
-               
-             </div>
-             <div class="span_frame5 pagination-centered">
-               <div>
-                 Enabled
-               </div>	
-               <select multiple name="sel_enable" id="sel_enable"  size=20 style="width:365px;" onchange="check_available();">
-<%== $list_enable %>
-               </select> 
-             </div>
-             </div>
-           </form>
-        
-       </div>
-     </section>
-  </div>	
-  	
+    <section id="enterprise_form"></section>
+
+    <form action="/enterprise" method="post" name="enterprise" id=
+    "enterprise">
+      <section id="enterprise_form"></section>
+
+      <div class="span12">
+        <section id="enterprise_form"></section>
+
+        <div class="span_frame5 pagination-centered">
+          <section id="enterprise_form"></section>
+
+          <div>
+            <section id="enterprise_form">Enterprise</section>
+          </div><section id="enterprise_form"><select id=
+          "sel_enterprise" name="sel_enterprise" onchange=
+          "this.form.submit();" style="width:363px;">
+            <%== $enterprise %>
+          </select></section>
+        </div><section id="enterprise_form"></section>
+
+        <div class="span_frame5 pagination-centered">
+          <section id="enterprise_form"></section>
+
+          <div>
+            <section id="enterprise_form">Get OID</section>
+          </div><section id="enterprise_form"><select id=
+          "sel_enterprise_oid" name="sel_enterprise_oid" onchange=
+          "this.form.submit();" style="width:363px;">
+            <%== $oids %>
+          </select></section>
+        </div><section id="enterprise_form"></section>
+      </div>
+    </form>
+  </div>
+  <hr>
+
+  <div class="container">
+    <section id="change_val"></section>
+
+    <form action="/change" method="post" name="change" id="change">
+      <section id="change_val"></section>
+
+      <div class="span12">
+        <section id="change_val"></section>
+
+        <div class="span3 pagination-centered">
+          <section id="change_val"><%== $oid %></section>
+        </div><section id="change_val"></section>
+
+        <div class="span3">
+          <section id="change_val"></section>
+
+          <center>
+            <section id="change_val">Type <%== $type %>
+            (<%== $type_str %>)</section>
+          </center><section id="change_val"></section>
+        </div>
+
+        <div class="span4 pagination-centered">
+          <section id="change_val"><input type="text" name=
+          "oid_val" id="oid_val" value="<%== $val %>" style=
+          "width:263px;"></section>
+        </div><section id="change_val"></section>
+
+        <div>
+          <section id="change_val"><button type="button" name=
+          "bt_oid_val" id="bt_oid_val" onclick=
+          "this.form.submit();"><section id="change_val">Set
+          value</section></button></section>
+        </div>
+      </div>
+    </form>
+  </div>
+  <hr>
+
+  <div class="container">
+    <section id="abelizer"></section>
+
+    <div class="container">
+      <section id="abelizer"></section>
+
+      <form action="/select" method="post" name="able" id="able">
+        <section id="abelizer"><input type="hidden" id="status"
+        name="status" value="undef"></section>
+
+        <div class="span12">
+          <section id="abelizer"></section>
+
+          <div class="span_frame5 pagination-centered">
+            <section id="abelizer"></section>
+
+            <div>
+              <section id="abelizer">Available</section>
+            </div><section id="abelizer"><select multiple name=
+            "sel_available" id="sel_available" size="20" style=
+            "width:365px;" onchange="check_enable();">
+              <%== $list_available %>
+            </select></section>
+          </div><section id="abelizer"></section>
+
+          <div class="span1 pagination-centered">
+            <section id="abelizer"></section>
+
+            <div>
+              <section id="abelizer">&nbsp; &nbsp;</section>
+            </div><section id="abelizer"><button style=
+            "margin-top:50px" type="button" name="bt_able" id=
+            "bt_able" onclick="this.form.submit();"><section id=
+            "abelizer"><img src="/double_arrow.png"></section>
+
+            <div>
+              &nbsp; &nbsp;
+            </div><button style="margin-top:30px" type="button"
+            name="bt_refresh" id="bt_refresh" onclick=
+            "reload();"><img src="/refresh.png"></button>
+
+            <div>
+              &nbsp; &nbsp;
+            </div><button style="margin-top:30px" type="button"
+            name="bt_flush" id="bt_flush" onclick=
+            "flush();"><img src=
+            "/flush.png"></button></button></section>
+          </div>
+
+          <div class="span_frame5 pagination-centered">
+            <div>
+              Enabled
+            </div><select multiple name="sel_enable" id=
+            "sel_enable" size="20" style="width:365px;" onchange=
+            "check_available();">
+              <%== $list_enable %>
+            </select>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div> 	
 	
 @@ select.html.ep
   <!DOCTYPE html>
@@ -570,7 +736,19 @@ function flush()
       <a href="/" >return</a>
     </body>
   </html>
-  
+	
+@@ enterprise.html.ep
+  <!DOCTYPE html>
+  <html>
+    <head>
+      <title>Enterprise</title> 
+      <meta HTTP-EQUIV="REFRESH" content="0; url=/">
+    </head>
+    <body>
+      in select
+      <a href="/" >return</a>
+    </body>
+  </html>  
   				
 @@ redir.html.ep
   <!DOCTYPE html>
