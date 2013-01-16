@@ -29,7 +29,8 @@ use subs qw(say);
 
 my $VERSION = '1.25';
 
-my $enterprise_oid = '.1.3.6.1.(2|4).1.';
+my $enterprise_mgmt_oid = '.1.3.6.1.(2|4).1.';
+my $enterprise_oid = '.1.3.6.1.4.1.';
 my @SKIP_OID       = qw( .1.3.6.1.4.1.8072 .1.3.6.1.4.1.2021  );
 my $file;
 my @Debug;
@@ -282,7 +283,7 @@ sub parse_walk
         $mib{ $oid }{ type }   = $type;
         $mib{ $oid }{ val }    = $val;
         $mib{ $oid }{ access } = 'ro';
-        my $tmp = $enterprise_oid;
+        my $tmp = $enterprise_mgmt_oid;
         $tmp =~ s/\./\\./g;
         my $res = ( $oid =~ /^($tmp\d+)/ );
         my $ent = $1;
@@ -407,12 +408,17 @@ sub parse_mib
 
     foreach my $oid ( keys( %SNMP::MIB ) )
     {
-# next if ( $oid !~ /^$enterprise_full/ );
-        my $res = ( $oid =~ /^($enterprise_oid\d+)/ );
-        my $ent;
+# next if ( $oid !~ /^$enterprise_full/ );   
+my $tmp = $enterprise_oid;
+        $tmp =~ s/\./\\./g;
+        my $res = ( $oid =~ /^($tmp\d+)/ );
+	next unless ( $res );
+      #  my $res = ( $oid =~ /^($enterprise_oid\d+)/ );
+        my $ent; 
+	$ent = $1;
         if ( $res )
         {
-            $ent = $1;
+          
             next if ( qr/$ent/ ~~ @SKIP_OID );
             $enterprises_full{ $ent } = '';
             say "<$res> <$oid> <$ent>" if ( $DEBUG{ 6 } );
@@ -525,7 +531,7 @@ sub sort_oid
 sub get_type
 {
     my $type = shift;
-    my $asn  = ASN_OCTET_STR;
+    my $asn  = 0 ;
     if ( $type =~ /(OCTETSTR)|(STRING)/i )
     {
         $asn = ASN_OCTET_STR;
