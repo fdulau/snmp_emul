@@ -27,11 +27,11 @@ Getopt::Long::Configure( "bundling", "ignore_case" );
 
 use subs qw(say);
 
-my $VERSION = '1.25';
+my $VERSION = '1.26';
 
 my $enterprise_mgmt_oid = '.1.3.6.1.(2|4).1.';
-my $enterprise_oid = '.1.3.6.1.4.1.';
-my @SKIP_OID       = qw( .1.3.6.1.4.1.8072 .1.3.6.1.4.1.2021  );
+my $enterprise_oid      = '.1.3.6.1.4.1.';
+my @SKIP_OID            = qw( .1.3.6.1.4.1.8072 .1.3.6.1.4.1.2021  );
 my $file;
 my @Debug;
 my $DELETE = 0;
@@ -240,12 +240,14 @@ sub parse_agentx
                 $redis->hdel( 'type',   $oid );
                 $redis->hdel( 'do',     $oid );
                 $redis->hdel( 'access', $oid );
+                $redis->hdel( 'label',  $oid );
             }
             else
             {
                 $redis->hset( 'type',   $oid, $mib{ $oid }{ type }   // 0 );
                 $redis->hset( 'access', $oid, $mib{ $oid }{ access } // 'ro' );
                 $redis->hset( 'val',    $oid, $mib{ $oid }{ val }    // '' );
+                $redis->hset( 'label',  $oid, $mib{ $oid }{ label }  // '' );
                 $redis->hset( 'do',     $oid, $mib{ $oid }{ do } )
                   if ( exists $mib{ $oid }{ do } );
                 $redis->hset( 'next', $oid, $sorted[$next] )
@@ -314,10 +316,10 @@ sub parse_walk
     {
         my $oid = $all_oid[$ind];
         my $next = $all_oid[ $ind + 1 ] // '';
-        next unless (  $next);
+        next unless ( $next );
         my $longest = $next;
         $longest =~ s/\.\d+$//;
-	say "<$oid> <$next> <$longest>" if ( $DEBUG{ 5 } );
+        say "<$oid> <$next> <$longest>" if ( $DEBUG{ 5 } );
         if ( !exists $mib{ $longest } )
         {
             $mib{ $longest }{ type }   = 0;
@@ -327,7 +329,7 @@ sub parse_walk
         }
 ##     $mib{ $oid }{ next } = $all_oid[ $ind + 1 ] // '';
     }
-    
+
     @all_oid = sort { sort_oid( $a, $b ) } keys %mib;
     foreach my $ind ( 0 .. $#all_oid )
     {
@@ -385,6 +387,7 @@ sub parse_walk
                 $redis->hdel( 'type',   $oid );
                 $redis->hdel( 'do',     $oid );
                 $redis->hdel( 'access', $oid );
+                $redis->hdel( 'label',  $oid );
             }
         }
     }
@@ -408,23 +411,24 @@ sub parse_mib
 
     foreach my $oid ( keys( %SNMP::MIB ) )
     {
-# next if ( $oid !~ /^$enterprise_full/ );   
-my $tmp = $enterprise_oid;
+# next if ( $oid !~ /^$enterprise_full/ );
+        my $tmp = $enterprise_oid;
         $tmp =~ s/\./\\./g;
         my $res = ( $oid =~ /^($tmp\d+)/ );
-	next unless ( $res );
-      #  my $res = ( $oid =~ /^($enterprise_oid\d+)/ );
-        my $ent; 
-	$ent = $1;
+        next unless ( $res );
+#  my $res = ( $oid =~ /^($enterprise_oid\d+)/ );
+        my $ent;
+        $ent = $1;
         if ( $res )
         {
-          
+
             next if ( qr/$ent/ ~~ @SKIP_OID );
             $enterprises_full{ $ent } = '';
             say "<$res> <$oid> <$ent>" if ( $DEBUG{ 6 } );
         }
-        my $type = $SNMP::MIB{ $oid }{ 'type' };
+        my $type   = $SNMP::MIB{ $oid }{ 'type' };
         my $access = $SNMP::MIB{ $oid }{ 'access' } // 'ro';
+        my $label  = $SNMP::MIB{ $oid }{ 'label' } // '';
         if ( $DEBUG{ 4 } )
         {
             print "OID=", $oid, "\n";
@@ -436,7 +440,7 @@ my $tmp = $enterprise_oid;
         }
         $mib{ $oid }{ type }   = get_type( $type );
         $mib{ $oid }{ access } = $access;
-
+        $mib{ $oid }{ label }  = $label;
     }
 
     my @sorted = sort { sort_oid( $a, $b ) } keys %mib;
@@ -454,11 +458,13 @@ my $tmp = $enterprise_oid;
                 $redis->hdel( 'type',   $oid );
                 $redis->hdel( 'do',     $oid );
                 $redis->hdel( 'access', $oid );
+                $redis->hdel( 'label',  $oid );
             }
             else
             {
                 $redis->hset( 'type',   $oid, $mib{ $oid }{ type } );
                 $redis->hset( 'access', $oid, $mib{ $oid }{ access } );
+                $redis->hset( 'label',  $oid, $mib{ $oid }{ label } );
                 $redis->hset( 'next',   $oid, $sorted[$next] )
                   if ( $next <= $#sorted );
             }
@@ -531,7 +537,7 @@ sub sort_oid
 sub get_type
 {
     my $type = shift;
-    my $asn  = 0 ;
+    my $asn  = 0;
     if ( $type =~ /(OCTETSTR)|(STRING)/i )
     {
         $asn = ASN_OCTET_STR;
