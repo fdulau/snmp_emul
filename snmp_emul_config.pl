@@ -18,7 +18,7 @@ use NetSNMP::OID;
 
 use subs qw( debug  list_dir);
 
-my $VERSION = '0.08';
+my $VERSION = '0.10';
 
 ####################### config section #######################
 my $PARSE            = 1;
@@ -66,7 +66,7 @@ my %ASN_TYPE = (
 
 my $AVAILABLE_PATH = File::Spec->catfile( $BASE, $AVAILABLE_FOLDER );
 my $ENABLED_PATH   = File::Spec->catfile( $BASE, $ENABLED_FOLDER );
-my $oid            = $DEFAULT_OID;
+my $OID            = '';
 my $val;
 my $type;
 my $oids_option_ent;
@@ -120,62 +120,74 @@ my $enabled = list_dir( $ENABLED_PATH, 1 );
 
 sub fetch_enterprise
 {
-  
     my @enterprises = $redis->smembers( 'enterprise' );
     my $res         = '<option name="opt" id="empty" value="" >' . "</option>\n";
-
     foreach my $ent ( @enterprises )
     {
-    if ( $selected_ent eq $ent )
-    {
-      $res .= '<option selected name="opt" id="' . $ent . '" value="' . $ent . '" >' . $ent . "</option>\n";
-    
-    }else{
-        $res .= '<option name="opt" id="' . $ent . '" value="' . $ent . '" >' . $ent . "</option>\n";
-	}
-
+   
+        if ($selected_ent &&  $selected_ent eq $ent )
+        {
+            $res .= '<option selected name="opt" id="' . $ent . '" value="' . $ent . '" >' . $ent . "</option>\n";
+        }
+        else
+        {
+            $res .= '<option name="opt" id="' . $ent . '" value="' . $ent . '" >' . $ent . "</option>\n";
+        }
     }
     return $res;
 }
 
 sub fetch_oids
 {
-
     my %enterprises = map { $_ => [] } $redis->smembers( 'enterprise' );
-
     my %enterprises_option;
-
-  #  my %all_next = $redis->hgetall( 'next' );
     my %all_type = $redis->hgetall( 'type' );
     my %all_oid;
-foreach my $t ( keys  %all_type )
-{
-next if ( $all_type{$t} == 0 );
-$all_oid{$t}=$all_type{$t};
-
-}
-## merge all_next and all_type to get all oid in all case( oops, a lot of all in that comment ) ##
-
-   # my %all_oid = ( %all_next, %all_type );
-# my %all_oid =  grep { $_[1] != 0 } each $redis->hgetall( 'type' );
+    foreach my $t ( keys %all_type )
+    {
+        next if ( $all_type{ $t } == 0 );
+        $all_oid{ $t } = $all_type{ $t };
+    }
 
     my @all_oids = sort { sort_oid( $a, $b ) } keys %all_oid;
-
-    foreach my $oid ( @all_oids )
+    foreach my $oid_local ( @all_oids )
     {
         my $tmp = $enterprise_oid;
         $tmp =~ s/\./\\./g;
-        my $res = ( $oid =~ /^($tmp\d+)/ );
+        my $res = ( $oid_local =~ /^($tmp\d+)/ );
         my $ent = $1;
-        push $enterprises{ $ent }, $oid;
+        push $enterprises{ $ent }, $oid_local;
     }
+
     foreach my $ent ( keys %enterprises )
     {
         my $res;
-        foreach my $oid ( @{ $enterprises{ $ent } } )
+        foreach my $oid_local ( @{ $enterprises{ $ent } } )
         {
-            $res .= '<option name="oids" id="' . $oid . '" value="' . $oid . '" >' . $oid . "</option>\n";
-
+            next unless ( $oid_local );
+	    my $label ='';
+	     if ( $redis->hexists( 'label',$oid_local  ) && $redis->hget( 'label',$oid_local  ))
+	     { 
+	     my $lbl = $redis->hget( 'label',$oid_local  );
+	     my $m =  () =  ($lbl =~ /(m)/ig );
+	     my $i = () = ($lbl =~ /(i|f)/ig );
+	     my $space = '&ensp;' x $m;
+	      $space = '&thinsp;' x $i;
+	     $space .= '&nbsp;' x (58 -length($lbl) - $m -$i -length($oid_local ));
+	     $label = $space .'('.$lbl.')' ;
+	     
+	     }
+	    debug "<$oid_local> <$label>" ;
+            if ( $OID && $oid_local eq $OID )
+            {
+	        
+                debug "****selected <$OID>  <$oid_local>";
+                $res .= '<option selected name="oids" id="' . $oid_local . '" value="' . $oid_local . '" >' . $oid_local .$label. "</option>\n";
+            }
+            else
+            {
+                $res .= '<option name="oids" id="' . $oid_local . '" value="' . $oid_local . '" >' . $oid_local .$label.  "</option>\n";
+            }
         }
         $enterprises_option{ $ent } = $res;
     }
@@ -225,7 +237,7 @@ get '/' => sub {
     $self->stash( list_available => $available );
     $self->stash( list_enable    => $enabled );
     $self->stash( version        => $VERSION );
-    $self->stash( oid            => $oid );
+    $self->stash( oid            => $OID );
     $self->stash( val            => $val );
     $self->stash( type           => $type );
     $self->stash( type_str       => $ASN_TYPE{ $type } );
@@ -243,30 +255,32 @@ get '/redir' => 'redir';
 
 post '/enterprise' => sub {
     my $self = shift;
-    debug( $self->tx->req->params );
     while ( my $line = shift @{ $self->tx->req->params->params } )
     {
         my $param = shift @{ $self->tx->req->params->params };
         debug "in ENTERPRISE <$line>";
+        if ( $line eq 'sel_enterprise_oid' && $param )
+        {
+            debug "****************************** in ENT oid =" . $param;
+            $OID = $param;
+            if ( $redis->hexists( 'type', $OID ) )
+            {
+                $type = $redis->hget( 'type', $OID ) // '';
+                $val  = $redis->hget( 'val',  $OID ) // '';
+            }
+	    $OID =~ /^((\.\d+){7})/;
+	    my $selected_ent = $1; 
+	    $oids_option     = fetch_oids();
+            $oids_option_ent = $oids_option->{ $selected_ent };
+            debug "<$OID> <$type> <$val> <$selected_ent> ";
+	    
+        }
         if ( $line eq 'sel_enterprise' && $param )
         {
-            debug "in ENT =" .$param;
-          $selected_ent =$param ;
-
+            debug "in ENT =" . $param;
+            $selected_ent = $param;
             $oids_option     = fetch_oids();
             $oids_option_ent = $oids_option->{ $selected_ent };
-
-        }
-	if ( $line eq 'sel_enterprise_oid' && $param )
-        {
-            debug "in ENT oid =" .$param;
-           $oid = $param;
-            if ( $redis->hexists( 'type', $oid ) )
-            {
-                $type = $redis->hget( 'type', $oid ) // '';
-                $val  = $redis->hget( 'val',  $oid ) // '';
-            }
-debug "<$oid> <$type> <$val>";
         }
     }
 } => 'enterprise';
@@ -280,21 +294,18 @@ post '/change' => sub {
         if ( $line eq 'oid' && $self->tx->req->params->params->[0] )
         {
             debug "in oid =" . $self->tx->req->params->params->[0];
-            $oid = shift @{ $self->tx->req->params->params };
-            if ( $redis->hexists( 'type', $oid ) )
+            $OID = shift @{ $self->tx->req->params->params };
+            if ( $redis->hexists( 'type', $OID ) )
             {
-                $type = $redis->hget( 'type', $oid ) // '';
-                $val  = $redis->hget( 'val',  $oid ) // '';
+                $type = $redis->hget( 'type', $OID ) // '';
+                $val  = $redis->hget( 'val',  $OID ) // '';
             }
         }
-        if ( $line eq 'oid_val' && $self->tx->req->params->params->[0] )
+        if ( $line eq 'oid_val'  )
         {
             debug "in oid_val =" . $self->tx->req->params->params->[0];
             $val = shift @{ $self->tx->req->params->params };
-            $redis->hset( 'val', $oid, $val );
-            $val  = '';
-            $type = '';
-            $oid  = $DEFAULT_OID;
+            $redis->hset( 'val', $OID, $val );
         }
     }
 } => 'change';
@@ -534,44 +545,29 @@ function flush()
    <div class="navbar navbar-fixed-top">
     <div class="navbar-inner">
       <div class="container">
-        <a class="btn btn-navbar" data-toggle="collapse"
-        data-target=".nav-collapse"></a> <a class="brand" href=
-        "http://www.menolly.be/snmp_emul/" target="_blank">SNMP
-        emulator configurator (version:<%== $version %>)</a>
-
-        <div class="nav-collapse" id="main-menu">
-          <div style="margin-left: 2em" class="nav" id=
-          "main-menu-left">
-            <ul class="btn btn-navbar"></ul>
-          </div>
-        </div>
+	<a class="brand" href=http://www.menolly.be/snmp_emul/" target="_blank">
+	  SNMP emulator configurator (version:<%== $version %>)
+	</a>
       </div>
     </div>
   </div>
 
   <div class="container">
-    <section id="upload"></section>
-
+    <section id="upload">
     <div class="container">
-      <section id="upload"><br></section>
-
+      <br>
       <div class="span12">
-        <section id="upload"></section>
-
         <div class="span1">
-          <section id="upload"></section>
+         
         </div>
 
         <div class="span9">
-          <section id="upload"></section>
-
-          <h3 style="margin-left:150px"><section id="upload">Upload
-          a new configuration file</section></h3>
-
-          <h4 style="margin-left:150px"><section id="upload">(
-          "MIB" or "snmpwalk -On" result or specific "agentx" file
-          )</section></h4>
-
+	  <h3 style="margin-left:150px">
+	    Upload a new configuration file
+	  </h3>
+          <h4 style="margin-left:150px">
+	    ("MIB" or "snmpwalk -On" result or specific "agentx" file)
+	  </h4>
           <div style="margin-left:20px;">
             %= form_for upload => ( enctype => 'multipart/form-data'  ) => begin
             %= file_field 'file'  => (size => '55'  )
@@ -582,41 +578,32 @@ function flush()
       </div>
     </div>
   </div>
+  
   <hr>
 
   <div class="container">
-    <section id="enterprise_form"></section>
-
-    <form action="/enterprise" method="post" name="enterprise" id=
-    "enterprise">
-      <section id="enterprise_form"></section>
-
-      <div class="span12">
-        <section id="enterprise_form"></section>
-
-        <div class="span_frame5 pagination-centered">
-          <section id="enterprise_form"></section>
-
+    <form action="/enterprise" method="post" name="enterprise" id="enterprise">
+      <div class="span13">
+	<div class="span_frame6 pagination-centered">
           <div>
-            <section id="enterprise_form">Enterprise</section>
-          </div><section id="enterprise_form"><select id=
-          "sel_enterprise" name="sel_enterprise" onchange=
-          "this.form.submit();" style="width:363px;">
-            <%== $enterprise %>
-          </select></section>
-        </div><section id="enterprise_form"></section>
-
-        <div class="span_frame5 pagination-centered">
-          <section id="enterprise_form"></section>
-
+            Enterprise
+          </div>
+	  <div>
+	    <select id="sel_enterprise" name="sel_enterprise" onchange="this.form.submit();" style="width:453px;">
+              <%== $enterprise %>
+            </select>
+	  </div>
+	</div>
+        <div class="span_frame6 pagination-centered">
           <div>
-            <section id="enterprise_form">Get OID</section>
-          </div><section id="enterprise_form"><select id=
-          "sel_enterprise_oid" name="sel_enterprise_oid" onchange=
-          "this.form.submit();" style="width:363px;">
-            <%== $oids %>
-          </select></section>
-        </div><section id="enterprise_form"></section>
+           Get OID
+          </div>
+	  <div>
+	    <select id="sel_enterprise_oid" name="sel_enterprise_oid" onchange="this.form.submit();" style="width:453px;">
+              <%== $oids %>
+            </select>
+	  </div>
+        </div>
       </div>
     </form>
   </div>
@@ -626,35 +613,22 @@ function flush()
     <section id="change_val"></section>
 
     <form action="/change" method="post" name="change" id="change">
-      <section id="change_val"></section>
-
       <div class="span12">
-        <section id="change_val"></section>
-
         <div class="span3 pagination-centered">
-          <section id="change_val"><%== $oid %></section>
-        </div><section id="change_val"></section>
-
-        <div class="span3">
-          <section id="change_val"></section>
-
-          <center>
-            <section id="change_val">Type <%== $type %>
-            (<%== $type_str %>)</section>
-          </center><section id="change_val"></section>
+	  <%== $oid %>
         </div>
-
+        <div class="span3">
+          <center>
+            Type <%== $type %> (<%== $type_str %>)
+          </center>
+        </div>
         <div class="span4 pagination-centered">
-          <section id="change_val"><input type="text" name=
-          "oid_val" id="oid_val" value="<%== $val %>" style=
-          "width:263px;"></section>
-        </div><section id="change_val"></section>
-
+          <input type="text" name="oid_val" id="oid_val" value="<%== $val %>" style="width:263px;">
+        </div>
         <div>
-          <section id="change_val"><button type="button" name=
-          "bt_oid_val" id="bt_oid_val" onclick=
-          "this.form.submit();"><section id="change_val">Set
-          value</section></button></section>
+         <button type="button" name="bt_oid_val" id="bt_oid_val" onclick="this.form.submit();">
+	    Set value
+	 </button>
         </div>
       </div>
     </form>
@@ -668,54 +642,47 @@ function flush()
       <section id="abelizer"></section>
 
       <form action="/select" method="post" name="able" id="able">
-        <section id="abelizer"><input type="hidden" id="status"
-        name="status" value="undef"></section>
-
+	<input type="hidden" id="status" name="status" value="undef">
         <div class="span12">
-          <section id="abelizer"></section>
-
           <div class="span_frame5 pagination-centered">
-            <section id="abelizer"></section>
-
             <div>
-              <section id="abelizer">Available</section>
-            </div><section id="abelizer"><select multiple name=
-            "sel_available" id="sel_available" size="20" style=
-            "width:365px;" onchange="check_enable();">
-              <%== $list_available %>
-            </select></section>
-          </div><section id="abelizer"></section>
+              Available
+            </div>
+	        <select multiple name="sel_available" id="sel_available" size="20" style="width:365px;" onchange="check_enable();">
+                  <%== $list_available %>
+                </select>
+          </div>
+
 
           <div class="span1 pagination-centered">
-            <section id="abelizer"></section>
+       
 
             <div>
-              <section id="abelizer">&nbsp; &nbsp;</section>
-            </div><section id="abelizer"><button style=
-            "margin-top:50px" type="button" name="bt_able" id=
-            "bt_able" onclick="this.form.submit();"><section id=
-            "abelizer"><img src="/double_arrow.png"></section>
+             &nbsp; &nbsp;
+            </div>
+	      <button style="margin-top:50px" type="button" name="bt_able" id="bt_able" onclick="this.form.submit();">
+	      <img src="/double_arrow.png">
+	       </button>
+            <div>
+              &nbsp; &nbsp;
+            </div>
+	    <button style="margin-top:30px" type="button" name="bt_refresh" id="bt_refresh" onclick= "reload();"><img src="/refresh.png">
+	    </button>
 
             <div>
               &nbsp; &nbsp;
-            </div><button style="margin-top:30px" type="button"
-            name="bt_refresh" id="bt_refresh" onclick=
-            "reload();"><img src="/refresh.png"></button>
-
-            <div>
-              &nbsp; &nbsp;
-            </div><button style="margin-top:30px" type="button"
-            name="bt_flush" id="bt_flush" onclick=
-            "flush();"><img src=
-            "/flush.png"></button></button></section>
+            </div>
+	    <button style="margin-top:30px" type="button" name="bt_flush" id="bt_flush" onclick= "flush();">
+	    <img src="/flush.png">
+	    </button>
+	    
           </div>
 
           <div class="span_frame5 pagination-centered">
             <div>
               Enabled
-            </div><select multiple name="sel_enable" id=
-            "sel_enable" size="20" style="width:365px;" onchange=
-            "check_available();">
+            </div>
+	    <select multiple name="sel_enable" id="sel_enable" size="20" style="width:365px;" onchange="check_available();">
               <%== $list_enable %>
             </select>
           </div>
@@ -804,6 +771,7 @@ button,html input[type="button"],input[type="reset"],input[type="submit"]{-webki
 label,select,button,input[type="button"],input[type="reset"],input[type="submit"],input[type="radio"],input[type="checkbox"]{cursor:pointer;}
 input[type="search"]{-webkit-box-sizing:content-box;-moz-box-sizing:content-box;box-sizing:content-box;-webkit-appearance:textfield;}
 input[type="search"]::-webkit-search-decoration,input[type="search"]::-webkit-search-cancel-button{-webkit-appearance:none;}
+
 textarea{overflow:auto;vertical-align:top;}
 @media print{*{text-shadow:none !important;color:#000 !important;background:transparent !important;box-shadow:none !important;} a,a:visited{text-decoration:underline;} a[href]:after{content:" (" attr(href) ")";} abbr[title]:after{content:" (" attr(title) ")";} .ir a:after,a[href^="javascript:"]:after,a[href^="#"]:after{content:"";} pre,blockquote{border:1px solid #999;page-break-inside:avoid;} thead{display:table-header-group;} tr,img{page-break-inside:avoid;} img{max-width:100% !important;} @page {margin:0.5cm;}p,h2,h3{orphans:3;widows:3;} h2,h3{page-break-after:avoid;}}.clearfix{*zoom:1;}.clearfix:before,.clearfix:after{display:table;content:"";line-height:0;}
 .clearfix:after{clear:both;}
@@ -819,6 +787,7 @@ a:hover{color:#0066cc;text-decoration:underline;}
 .row:after{clear:both;}
 [class*="span"]{float:left;min-height:1px;margin-left:20px;}
 .container,.navbar-static-top .container,.navbar-fixed-top .container,.navbar-fixed-bottom .container{width:940px;}
+.span13{width:1000px;}
 .span12{width:940px;}
 .span11{width:860px;}
 .span10{width:780px;}
