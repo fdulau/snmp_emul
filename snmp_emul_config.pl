@@ -18,12 +18,13 @@ use NetSNMP::OID;
 
 use subs qw( debug  list_dir);
 
-my $VERSION = '0.10';
+my $VERSION = '0.11';
 
 ####################### config section #######################
 my $PARSE            = 1;
 my $LISTEN           = 'http://*:8080';
 my $LOG              = '/tmp/mojo.log';
+#my $LOG;
 my $BASE             = '/opt/snmp_emul/conf';
 my $AVAILABLE_FOLDER = 'available';
 my $ENABLED_FOLDER   = 'enabled';
@@ -124,8 +125,7 @@ sub fetch_enterprise
     my $res         = '<option name="opt" id="empty" value="" >' . "</option>\n";
     foreach my $ent ( @enterprises )
     {
-   
-        if ($selected_ent &&  $selected_ent eq $ent )
+        if ( $selected_ent && $selected_ent eq $ent )
         {
             $res .= '<option selected name="opt" id="' . $ent . '" value="' . $ent . '" >' . $ent . "</option>\n";
         }
@@ -165,33 +165,26 @@ sub fetch_oids
         foreach my $oid_local ( @{ $enterprises{ $ent } } )
         {
             next unless ( $oid_local );
-	    my $label ='';
-	     if ( $redis->hexists( 'label',$oid_local  ) && $redis->hget( 'label',$oid_local  ))
-	     { 
-	     my $lbl = $redis->hget( 'label',$oid_local  );
-	     my $m =  () =  ($lbl =~ /(m)/ig );
-	     my $i = () = ($lbl =~ /(i|f)/ig );
-	     my $space = '&ensp;' x $m;
-	      $space = '&thinsp;' x $i;
-	     $space .= '&nbsp;' x (58 -length($lbl) - $m -$i -length($oid_local ));
-	     $label = $space .'('.$lbl.')' ;
-	     
-	     }
-	    debug "<$oid_local> <$label>" ;
+            my $label = ' ';
+            if ( $redis->hexists( 'label', $oid_local ) && $redis->hget( 'label', $oid_local ) )
+            {
+                my $lbl = $redis->hget( 'label', $oid_local );
+                my $space = '&nbsp;' x ( 70 - length( $oid_local ) - length( $lbl ) );
+                $label = $space . '(' . $lbl . ')';
+            }
+           # debug "<$oid_local> <$label>";
             if ( $OID && $oid_local eq $OID )
             {
-	        
-                debug "****selected <$OID>  <$oid_local>";
-                $res .= '<option selected name="oids" id="' . $oid_local . '" value="' . $oid_local . '" >' . $oid_local .$label. "</option>\n";
+             #   debug "****selected <$OID>  <$oid_local>";
+                $res .= '<option selected name="oids" id="' . $oid_local . '" value="' . $oid_local . '" >' . $oid_local . $label . "</option>\n";
             }
             else
             {
-                $res .= '<option name="oids" id="' . $oid_local . '" value="' . $oid_local . '" >' . $oid_local .$label.  "</option>\n";
+                $res .= '<option name="oids" id="' . $oid_local . '" value="' . $oid_local . '" >' . $oid_local . $label . "</option>\n";
             }
         }
         $enterprises_option{ $ent } = $res;
     }
-
     return ( \%enterprises_option );
 }
 
@@ -257,6 +250,7 @@ post '/enterprise' => sub {
     my $self = shift;
     while ( my $line = shift @{ $self->tx->req->params->params } )
     {
+    debug($self->tx->req->params->params);
         my $param = shift @{ $self->tx->req->params->params };
         debug "in ENTERPRISE <$line>";
         if ( $line eq 'sel_enterprise_oid' && $param )
@@ -268,17 +262,12 @@ post '/enterprise' => sub {
                 $type = $redis->hget( 'type', $OID ) // '';
                 $val  = $redis->hget( 'val',  $OID ) // '';
             }
-	    $OID =~ /^((\.\d+){7})/;
-	    my $selected_ent = $1; 
-	    $oids_option     = fetch_oids();
-            $oids_option_ent = $oids_option->{ $selected_ent };
             debug "<$OID> <$type> <$val> <$selected_ent> ";
-	    
         }
         if ( $line eq 'sel_enterprise' && $param )
         {
             debug "in ENT =" . $param;
-            $selected_ent = $param;
+            $selected_ent    = $param;
             $oids_option     = fetch_oids();
             $oids_option_ent = $oids_option->{ $selected_ent };
         }
@@ -301,7 +290,7 @@ post '/change' => sub {
                 $val  = $redis->hget( 'val',  $OID ) // '';
             }
         }
-        if ( $line eq 'oid_val'  )
+        if ( $line eq 'oid_val' )
         {
             debug "in oid_val =" . $self->tx->req->params->params->[0];
             $val = shift @{ $self->tx->req->params->params };
@@ -311,7 +300,6 @@ post '/change' => sub {
 } => 'change';
 
 post '/select' => sub {
-
     my $self = shift;
     my $name;
 
@@ -365,10 +353,10 @@ post '/select' => sub {
                 }
             }
         }
+	
         if ( $line =~ /flushing/ )
         {
             debug "doing flush";
-
             opendir( my $dh, $ENABLED_PATH ) || die "can't opendir $ENABLED_PATH $!";
             my @dots = sort grep { -f "$ENABLED_PATH/$_" } readdir( $dh );
             closedir $dh;
@@ -584,22 +572,22 @@ function flush()
   <div class="container">
     <form action="/enterprise" method="post" name="enterprise" id="enterprise">
       <div class="span13">
-	<div class="span_frame6 pagination-centered">
+	<div class="span_frame4 pagination-centered">
           <div>
             Enterprise
           </div>
 	  <div>
-	    <select id="sel_enterprise" name="sel_enterprise" onchange="this.form.submit();" style="width:453px;">
+	    <select id="sel_enterprise" name="sel_enterprise" onchange="this.form.submit();" style="width:293px;">
               <%== $enterprise %>
             </select>
 	  </div>
 	</div>
-        <div class="span_frame6 pagination-centered">
+        <div class="span_frame8 pagination-centered">
           <div>
            Get OID
           </div>
 	  <div>
-	    <select id="sel_enterprise_oid" name="sel_enterprise_oid" onchange="this.form.submit();" style="width:453px;">
+	    <select style="font-family: 'Courier New',Courier,monospace;width:613px;" id="sel_enterprise_oid" name="sel_enterprise_oid" onchange="this.form.submit();" >
               <%== $oids %>
             </select>
 	  </div>
