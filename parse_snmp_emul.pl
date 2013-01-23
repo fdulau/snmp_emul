@@ -27,7 +27,7 @@ Getopt::Long::Configure( "bundling", "ignore_case" );
 
 use subs qw(say);
 
-my $VERSION = '1.26';
+my $VERSION = '1.27';
 
 my $enterprise_mgmt_oid = '.1.3.6.1.(2|4).1.';
 my $enterprise_oid      = '.1.3.6.1.4.1.';
@@ -39,6 +39,8 @@ my $help;
 my $version;
 my $flush;
 my $blank;
+my $ret_enterprise;
+my @ent_list ;
 
 GetOptions(
     'f=s' => \$file,
@@ -48,6 +50,7 @@ GetOptions(
     'v'   => \$version,
     'F'   => \$flush,
     'b'   => \$blank,
+    'e'   => \$ret_enterprise,
 );
 
 if ( $version ) { print "$0 $VERSION \n"; exit; }
@@ -59,6 +62,7 @@ if ( $help )
     print "Where options include:\n";
     print "\t -h \t\t This help \n";
     print "\t -f file \t file to parse \n";
+    print "\t -e \t\t when parsing, return a list with the enterprise OID related to that file \n"; 
     print "\t -D \t\t delete the entries \n";
     print "\t -F \t\t flush ALL entries from the DB \n";
     print "\t -b \t\t blank run ( only debug and no real action on the DB ) \n";
@@ -76,12 +80,17 @@ my %enterprises_full;
 my %mib;
 
 my $REDIS = '127.0.0.1:6379';
-my $redis = Redis->new(
+my $redis;
+
+unless ( $blank )
+{
+$redis = Redis->new(
     server => $REDIS,
     debug  => 0
 );
 
 $redis->select( 4 );    # use DB nbr 4
+}
 
 if ( $flush )
 {
@@ -154,6 +163,11 @@ if ( $agentx )
     parse_agentx();
 }
 
+if ($ret_enterprise )
+{
+print join ',' ,@ent_list;
+}
+
 sub parse_agentx
 {
     foreach my $base_oid ( keys %{ $Conf{ oid } } )
@@ -176,10 +190,11 @@ sub parse_agentx
     my @sorted = sort { sort_oid( $a, $b ) } keys %mib;
 
     foreach my $ent_full ( keys %enterprises_full )
-    {
+    {   
+        push @ent_list, $ent_full ;
         if ( !$blank )
         {
-            $redis->sadd( 'enterprise', $ent_full );
+            $redis->sadd( 'enterprise', $ent_full ); 
         }
         $mib{ $ent_full }{ next } = $sorted[ next_leaf( 0, \@sorted ) ];
     }
@@ -298,6 +313,7 @@ sub parse_walk
         $mib{ $ent_full }{ type }   = 0;
         $mib{ $ent_full }{ access } = 'ro';
         $mib{ $ent_full }{ val }    = '';
+	push @ent_list, $ent_full unless ( $DELETE );
         if ( !$blank )
         {
             if ( $DELETE )
@@ -480,6 +496,7 @@ sub parse_mib
 
     foreach my $ent_full ( keys %enterprises_full )
     {
+        push @ent_list, $ent_full ;
         if ( !$blank )
         {
             $redis->sadd( 'enterprise', $ent_full );
