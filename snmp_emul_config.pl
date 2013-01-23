@@ -18,12 +18,12 @@ use NetSNMP::OID;
 
 use subs qw( debug  list_dir);
 
-my $VERSION = '0.11';
+my $VERSION = '0.12';
 
 ####################### config section #######################
-my $PARSE            = 1;
-my $LISTEN           = 'http://*:8080';
-my $LOG              = '/tmp/mojo.log';
+my $PARSE  = 1;
+my $LISTEN = 'http://*:8080';
+my $LOG    = '/tmp/mojo.log';
 #my $LOG;
 my $BASE             = '/opt/snmp_emul/conf';
 my $AVAILABLE_FOLDER = 'available';
@@ -72,6 +72,7 @@ my $val;
 my $type;
 my $oids_option_ent;
 my $selected_ent;
+my %enterprise_by_file;
 
 sub debug
 {
@@ -99,9 +100,32 @@ sub list_dir
     my $some_dir = shift;
     my $dis      = shift;
     my $tag      = 'en_';
+
     if ( $dis )
     {
         $tag = 'dis_';
+        opendir( my $dh, $ENABLED_PATH ) || die "can't opendir $ENABLED_PATH $!";
+        my @dots = sort grep { -f "$ENABLED_PATH/$_" } readdir( $dh );
+        closedir $dh;
+        foreach my $file_name ( @dots )
+        {
+            my $dest_file = File::Spec->catfile( $AVAILABLE_PATH, $file_name );
+            if ( $PARSE )
+            {
+                my $cmd = "$CMD -f $dest_file -e -b";
+                my $res_do;
+                eval {
+                    my $pid = open( my $README, "-|", $cmd )
+                      or debug "Couldn't fork: $! <$cmd>";
+                    while ( <$README> )
+                    {
+                        $res_do .= $_;
+                    }
+                    debug $res_do;
+                    $enterprise_by_file{ $file_name } = $res_do;
+                };
+            }
+        }
     }
     my $res;
     opendir( my $dh, $some_dir ) || die "can't opendir $some_dir: $!";
@@ -109,8 +133,16 @@ sub list_dir
     closedir $dh;
     foreach my $file_name ( @dots )
     {
-        my $file = "$some_dir/$file_name";
-        $res .= '<option name="opt" id="' . $tag . $file_name . '" value="' . $file . '" >' . $file_name . "</option>\n";
+        my $file     = "$some_dir/$file_name";
+        my $tag_name = $file_name;
+        if ( $dis && exists $enterprise_by_file{ $file_name } )
+        {
+
+            my $space = '&nbsp;' x ( 62 - length( $enterprise_by_file{ $file_name } ) - length( $file_name ) );
+
+            $tag_name .= $space . '(' . $enterprise_by_file{ $file_name } . ')';
+        }
+        $res .= '<option name="opt" id="' . $tag . $file_name . '" value="' . $file . '" >' . $tag_name . "</option>\n";
     }
     $res .= '<option name="opt" id="' . $tag . 'empty" value="" >' . "</option>\n";
     return $res;
@@ -156,12 +188,12 @@ sub fetch_oids
         $tmp =~ s/\./\\./g;
         my $res = ( $oid_local =~ /^($tmp\d+)/ );
         my $ent = $1;
-        push $enterprises{ $ent }, $oid_local;
+        push @{ $enterprises{ $ent } }, $oid_local;
     }
 
     foreach my $ent ( keys %enterprises )
     {
-        my $res;
+        my $res = '<option name="oids" id="empty" value=""></option>\n";';
         foreach my $oid_local ( @{ $enterprises{ $ent } } )
         {
             next unless ( $oid_local );
@@ -172,10 +204,8 @@ sub fetch_oids
                 my $space = '&nbsp;' x ( 70 - length( $oid_local ) - length( $lbl ) );
                 $label = $space . '(' . $lbl . ')';
             }
-           # debug "<$oid_local> <$label>";
             if ( $OID && $oid_local eq $OID )
             {
-             #   debug "****selected <$OID>  <$oid_local>";
                 $res .= '<option selected name="oids" id="' . $oid_local . '" value="' . $oid_local . '" >' . $oid_local . $label . "</option>\n";
             }
             else
@@ -224,6 +254,7 @@ app->secret( 'Fab pass' );
 # Upload form in DATA section
 get '/' => sub {
     my $self = shift;
+
     $available         = list_dir( $AVAILABLE_PATH );
     $enabled           = list_dir( $ENABLED_PATH, 1 );
     $enterprise_option = fetch_enterprise();
@@ -250,12 +281,11 @@ post '/enterprise' => sub {
     my $self = shift;
     while ( my $line = shift @{ $self->tx->req->params->params } )
     {
-    debug($self->tx->req->params->params);
+        debug( $self->tx->req->params->params );
         my $param = shift @{ $self->tx->req->params->params };
         debug "in ENTERPRISE <$line>";
         if ( $line eq 'sel_enterprise_oid' && $param )
         {
-            debug "****************************** in ENT oid =" . $param;
             $OID = $param;
             if ( $redis->hexists( 'type', $OID ) )
             {
@@ -269,6 +299,9 @@ post '/enterprise' => sub {
             debug "in ENT =" . $param;
             $selected_ent    = $param;
             $oids_option     = fetch_oids();
+            $OID             = '';
+            $type            = '';
+            $val             = '';
             $oids_option_ent = $oids_option->{ $selected_ent };
         }
     }
@@ -353,7 +386,7 @@ post '/select' => sub {
                 }
             }
         }
-	
+
         if ( $line =~ /flushing/ )
         {
             debug "doing flush";
@@ -631,12 +664,12 @@ function flush()
 
       <form action="/select" method="post" name="able" id="able">
 	<input type="hidden" id="status" name="status" value="undef">
-        <div class="span12">
-          <div class="span_frame5 pagination-centered">
+        <div class="span13">
+          <div class="span_frame4 pagination-centered">
             <div>
               Available
             </div>
-	        <select multiple name="sel_available" id="sel_available" size="20" style="width:365px;" onchange="check_enable();">
+	        <select multiple name="sel_available" id="sel_available" size="20" style="width:295px;" onchange="check_enable();">
                   <%== $list_available %>
                 </select>
           </div>
@@ -666,11 +699,11 @@ function flush()
 	    
           </div>
 
-          <div class="span_frame5 pagination-centered">
+          <div class="span_frame7 pagination-centered">
             <div>
               Enabled
             </div>
-	    <select multiple name="sel_enable" id="sel_enable" size="20" style="width:365px;" onchange="check_available();">
+	    <select multiple name="sel_enable" id="sel_enable" size="20" style="font-family: 'Courier New',Courier,monospace;width:535px;" onchange="check_available();">
               <%== $list_enable %>
             </select>
           </div>
@@ -736,7 +769,7 @@ function flush()
     <head><title><%= $title %> <%= $version %></title>
     <link href="/css/min.css" rel="stylesheet" type="text/css">
     </head>
-    <body><%= content %></body>
+    <body ><%= content %></body>
   </html>
   
   
