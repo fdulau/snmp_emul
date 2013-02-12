@@ -27,7 +27,7 @@ Getopt::Long::Configure( "bundling", "ignore_case" );
 
 use subs qw(say);
 
-my $VERSION = '1.27';
+my $VERSION = '1.29';
 
 my $enterprise_mgmt_oid = '.1.3.6.1.(2|4).1.';
 my $enterprise_oid      = '.1.3.6.1.4.1.';
@@ -40,7 +40,7 @@ my $version;
 my $flush;
 my $blank;
 my $ret_enterprise;
-my @ent_list ;
+my @ent_list;
 
 GetOptions(
     'f=s' => \$file,
@@ -62,7 +62,7 @@ if ( $help )
     print "Where options include:\n";
     print "\t -h \t\t This help \n";
     print "\t -f file \t file to parse \n";
-    print "\t -e \t\t when parsing, return a list with the enterprise OID related to that file \n"; 
+    print "\t -e \t\t when parsing, return a list with the enterprise OID related to that file \n";
     print "\t -D \t\t delete the entries \n";
     print "\t -F \t\t flush ALL entries from the DB \n";
     print "\t -b \t\t blank run ( only debug and no real action on the DB ) \n";
@@ -84,12 +84,12 @@ my $redis;
 
 unless ( $blank )
 {
-$redis = Redis->new(
-    server => $REDIS,
-    debug  => 0
-);
+    $redis = Redis->new(
+        server => $REDIS,
+        debug  => 0
+    );
 
-$redis->select( 4 );    # use DB nbr 4
+    $redis->select( 4 );    # use DB nbr 4
 }
 
 if ( $flush )
@@ -163,9 +163,9 @@ if ( $agentx )
     parse_agentx();
 }
 
-if ($ret_enterprise )
+if ( $ret_enterprise )
 {
-print join ',' ,@ent_list;
+    print join ',', @ent_list;
 }
 
 sub parse_agentx
@@ -190,11 +190,11 @@ sub parse_agentx
     my @sorted = sort { sort_oid( $a, $b ) } keys %mib;
 
     foreach my $ent_full ( keys %enterprises_full )
-    {   
-        push @ent_list, $ent_full ;
+    {
+        push @ent_list, $ent_full;
         if ( !$blank )
         {
-            $redis->sadd( 'enterprise', $ent_full ); 
+            $redis->sadd( 'enterprise', $ent_full );
         }
         $mib{ $ent_full }{ next } = $sorted[ next_leaf( 0, \@sorted ) ];
     }
@@ -241,9 +241,16 @@ sub parse_agentx
 
     @sorted = sort { sort_oid( $a, $b ) } keys %mib;
 
+    my $start_oid;
+    my $last_oid;
     foreach my $ind ( 0 .. $#sorted )
     {
         my $oid = $sorted[$ind];
+        if ( !defined $start_oid )
+        {
+            $start_oid = $oid;
+        }
+        $last_oid = $oid;
         my $next = next_leaf( $ind, \@sorted );
         $mib{ $oid }{ next } = $sorted[$next] // '';
         if ( !$blank )
@@ -270,6 +277,11 @@ sub parse_agentx
             }
         }
     }
+    if ( !$blank && !$DELETE )
+    {
+        $start_oid =~ s/(\d+)\.\d+$/$1 + 1/e;
+        $redis->hset( 'next', $last_oid, $start_oid );
+    }
 
     foreach my $ent_full ( keys %enterprises_full )
     {
@@ -287,13 +299,13 @@ sub parse_agentx
 
 sub parse_walk
 {
+    my $start_oid;
     foreach my $line ( @lines )
     {
         $line =~ /^((\.\d+)+)\s+=\s+((\S+):\s+)*(.+)/;
         my $oid      = $1;
         my $type_raw = $4 // '';
         my $val      = $5 // '';
-
         my $type = get_type( $type_raw );
         $val =~ s/"//g;
 
@@ -303,7 +315,7 @@ sub parse_walk
         my $tmp = $enterprise_mgmt_oid;
         $tmp =~ s/\./\\./g;
         my $res = ( $oid =~ /^($tmp\d+)/ );
-        my $ent = $1;
+        my $ent = $1 // '.1.3.6';
         $enterprises_full{ $ent } = '';
         say "<$res> [$line]  <$oid> <$type>  <$val>" if ( $DEBUG{ 4 } );
     }
@@ -313,7 +325,7 @@ sub parse_walk
         $mib{ $ent_full }{ type }   = 0;
         $mib{ $ent_full }{ access } = 'ro';
         $mib{ $ent_full }{ val }    = '';
-	push @ent_list, $ent_full unless ( $DELETE );
+        push @ent_list, $ent_full unless ( $DELETE );
         if ( !$blank )
         {
             if ( $DELETE )
@@ -330,7 +342,11 @@ sub parse_walk
     my @all_oid = sort { sort_oid( $a, $b ) } keys %mib;
     foreach my $ind ( 0 .. $#all_oid )
     {
-        my $oid = $all_oid[$ind];
+        my $oid = $all_oid[$ind];        
+	if ( !defined $start_oid )
+        {
+            $start_oid = $oid;
+        }
         my $next = $all_oid[ $ind + 1 ] // '';
         next unless ( $next );
         my $longest = $next;
@@ -345,7 +361,6 @@ sub parse_walk
         }
 ##     $mib{ $oid }{ next } = $all_oid[ $ind + 1 ] // '';
     }
-
     @all_oid = sort { sort_oid( $a, $b ) } keys %mib;
     foreach my $ind ( 0 .. $#all_oid )
     {
@@ -364,9 +379,10 @@ sub parse_walk
             }
         }
     }
-
+    my $last_oid;
     foreach my $o ( @all_oid )
     {
+        $last_oid = $o;
         next if ( !exists $mib{ $o }{ next } || !defined $mib{ $o }{ next } || !$o );
         my $next = $mib{ $o }{ next };
 
@@ -387,11 +403,13 @@ sub parse_walk
                     if ( !$DELETE )
                     {
                         $redis->hset( 'next', $new_oid, $next );
+			$redis->hset( 'type',$new_oid , 0 );
                     }
                 }
             }
         }
     }
+
     if ( !$blank )
     {
         if ( $DELETE )
@@ -405,6 +423,11 @@ sub parse_walk
                 $redis->hdel( 'access', $oid );
                 $redis->hdel( 'label',  $oid );
             }
+        }
+        else
+        {
+            $start_oid =~ s/(\d+)\.\d+$/$1 + 1/e;
+            $redis->hset( 'next', $last_oid,  $start_oid );
         }
     }
 
@@ -424,9 +447,15 @@ sub parse_mib
 
     &SNMP::addMibFiles( $file );
     &SNMP::initMib();
-
+    my $start_oid;
+    my $last_oid;
     foreach my $oid ( keys( %SNMP::MIB ) )
     {
+        if ( !defined $start_oid )
+        {
+            $start_oid = $oid;
+        }
+        $last_oid = $oid;
 # next if ( $oid !~ /^$enterprise_full/ );
         my $tmp = $enterprise_oid;
         $tmp =~ s/\./\\./g;
@@ -435,6 +464,7 @@ sub parse_mib
 #  my $res = ( $oid =~ /^($enterprise_oid\d+)/ );
         my $ent;
         $ent = $1;
+
         if ( $res )
         {
 
@@ -492,11 +522,16 @@ sub parse_mib
         {
             $redis->srem( 'enterprise', $enterprise_full );
         }
+        else
+        {
+            $start_oid =~ s/(\d+)\.\d+$/$1 + 1/e;
+            $redis->hset( 'next', $last_oid, $start_oid );
+        }
     }
 
     foreach my $ent_full ( keys %enterprises_full )
     {
-        push @ent_list, $ent_full ;
+        push @ent_list, $ent_full;
         if ( !$blank )
         {
             $redis->sadd( 'enterprise', $ent_full );
@@ -560,7 +595,7 @@ sub get_type
         $asn = ASN_OCTET_STR;
     }
 
-    if ( $type =~ /^INTEGER$/i || $type =~ /^INTEGER32$/i )
+    if ( $type =~ /^INTEGER(32)?$/i  )
     {
         $asn = ASN_INTEGER;
     }
@@ -574,7 +609,7 @@ sub get_type
     {
         $asn = ASN_COUNTER64;
     }
-    if ( $type =~ /^COUNTER$/i || $type =~ /^COUNTER32$/i )
+    if ( $type =~ /^COUNTER(32)?$/i)
     {
         $asn = ASN_COUNTER;
     }
@@ -583,7 +618,7 @@ sub get_type
     {
         $asn = ASN_UNSIGNED64;
     }
-    if ( $type =~ /^UNSIGNED$/i || $type =~ /^UNSIGNED32$/i )
+    if ( $type =~ /^UNSIGNED(32)?$/i|| $type =~ /^Gauge(32)?$/i )
     {
         $asn = ASN_UNSIGNED;
     }
@@ -603,7 +638,7 @@ sub get_type
         $asn = ASN_GAUGE;
     }
 
-    if ( $type =~ /^OBJECTID$/i )
+    if ( $type =~ /^OBJECTID$/i || $type =~ /^OID$/i )
     {
         $asn = ASN_OBJECT_ID;
     }
@@ -647,7 +682,7 @@ sub get_type
 # if ( $type =~ /^$/i ) {
 # $asn = ASN_;
 # }
-
+#    say "<$type> => <$asn>";
     return $asn;
 }
 
