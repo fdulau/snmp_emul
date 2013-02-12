@@ -69,6 +69,7 @@ my $AVAILABLE_PATH = File::Spec->catfile( $BASE, $AVAILABLE_FOLDER );
 my $ENABLED_PATH   = File::Spec->catfile( $BASE, $ENABLED_FOLDER );
 my $OID            = '';
 my $val;
+my $do; 
 my $type;
 my $oids_option_ent;
 my $selected_ent;
@@ -263,6 +264,7 @@ get '/' => sub {
     $self->stash( version        => $VERSION );
     $self->stash( oid            => $OID );
     $self->stash( val            => $val );
+    $self->stash( do             => $do );
     $self->stash( type           => $type );
     $self->stash( type_str       => $ASN_TYPE{ $type } );
     $self->stash( enterprise     => $enterprise_option );
@@ -291,6 +293,7 @@ post '/enterprise' => sub {
             {
                 $type = $redis->hget( 'type', $OID ) // '';
                 $val  = $redis->hget( 'val',  $OID ) // '';
+		$do   = $redis->hget( 'do',   $OID ) // '';
             }
             debug "<$OID> <$type> <$val> <$selected_ent> ";
         }
@@ -302,6 +305,7 @@ post '/enterprise' => sub {
             $OID             = '';
             $type            = '';
             $val             = '';
+	    $do              = '';
             $oids_option_ent = $oids_option->{ $selected_ent };
         }
     }
@@ -321,6 +325,7 @@ post '/change' => sub {
             {
                 $type = $redis->hget( 'type', $OID ) // '';
                 $val  = $redis->hget( 'val',  $OID ) // '';
+		$do   = $redis->hget( 'do',   $OID ) // '';
             }
         }
         if ( $line eq 'oid_val' )
@@ -328,6 +333,12 @@ post '/change' => sub {
             debug "in oid_val =" . $self->tx->req->params->params->[0];
             $val = shift @{ $self->tx->req->params->params };
             $redis->hset( 'val', $OID, $val );
+        }
+	if ( $line eq 'oid_do' )
+        {
+            debug "in oid_do =" . $self->tx->req->params->params->[0];
+            $do = shift @{ $self->tx->req->params->params };
+            $redis->hset( 'do', $OID, $do );
         }
     }
 } => 'change';
@@ -631,9 +642,8 @@ function flush()
   <hr>
 
   <div class="container">
-    <section id="change_val"></section>
-
     <form action="/change" method="post" name="change" id="change">
+    
       <div class="span12">
         <div class="span3 pagination-centered">
 	  <%== $oid %>
@@ -646,7 +656,19 @@ function flush()
         <div class="span4 pagination-centered">
           <input type="text" name="oid_val" id="oid_val" value="<%== $val %>" style="width:263px;">
         </div>
-        <div>
+
+        <div class="span3 pagination-centered">
+	  &nbsp;
+        </div>
+        <div class="span3">
+          <center>
+            DO
+          </center>
+        </div>
+	<div class="span4 pagination-centered">
+          <input type="text" name="oid_do" id="oid_do" value="<%== $do %>" style="width:263px;">
+        </div>
+     <div>
          <button type="button" name="bt_oid_val" id="bt_oid_val" onclick="this.form.submit();">
 	    Set value
 	 </button>
