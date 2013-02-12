@@ -33,7 +33,7 @@ if ( $opts{ 'h' } )
 {
     print "usage $0 [-D] [-d level] [-h] [-v]\n\n";
     print "\t -h \t\t this help\n";
-    print "\t -d level\t\t debug level\n";
+ #   print "\t -d level \t debug level\n";
     print "\t -D \t\t detach and daemonize\n";
     print "\t -v \t\t print version and die\n";
     exit;
@@ -479,8 +479,8 @@ sub format_val
 # eval($res);
     $res = sprintf "%s", $res;
 
-# my ( $pkg, $file, $line, $sub ) = ( caller(0) )[ 0, 1, 2, 3 ];
-# say "[$line] format val=<$val> type=<$type> res=<$res>";
+ my ( $pkg, $file, $line, $sub ) = ( caller(0) )[ 0, 1, 2, 3 ];
+ say "[$line] format val=<$val> type=<$type> res=<$res>";
     return $res;
 }
 
