@@ -27,8 +27,8 @@ Getopt::Long::Configure( "bundling", "ignore_case" );
 
 use subs qw(say);
 
-my $VERSION = '1.29';
-
+my $VERSION = '1.33';
+my $REDIS = '127.0.0.1:6379';
 my $enterprise_mgmt_oid = '.1.3.6.1.(2|4).1.';
 my $enterprise_oid      = '.1.3.6.1.4.1.';
 my @SKIP_OID            = qw( .1.3.6.1.4.1.8072 .1.3.6.1.4.1.2021  );
@@ -51,6 +51,7 @@ GetOptions(
     'F'   => \$flush,
     'b'   => \$blank,
     'e'   => \$ret_enterprise,
+    'r=s' => \$REDIS,
 );
 
 if ( $version ) { print "$0 $VERSION \n"; exit; }
@@ -66,6 +67,7 @@ if ( $help )
     print "\t -D \t\t delete the entries \n";
     print "\t -F \t\t flush ALL entries from the DB \n";
     print "\t -b \t\t blank run ( only debug and no real action on the DB ) \n";
+    print "\t -r server:port \t use that redis server (default=$REDIS)\n";
     print "\t -d nbr \t debug level to show \n";
     print "\t\t\t could be repeated to show divers level\n";
     print "\t\t\t e.g. -d 0 -d 3 \n";
@@ -79,7 +81,7 @@ my $enterprise_full;
 my %enterprises_full;
 my %mib;
 
-my $REDIS = '127.0.0.1:6379';
+
 my $redis;
 
 unless ( $blank )
@@ -302,10 +304,10 @@ sub parse_walk
     my $start_oid;
     foreach my $line ( @lines )
     {
-        $line =~ /^((\.\d+)+)\s+=\s+((\S+):\s+)*(.+)/;
+        $line =~ /^((\.\d+)+)\s+=\s+(\S+):\s*(\S*)/;
         my $oid      = $1;
-        my $type_raw = $4 // '';
-        my $val      = $5 // '';
+        my $type_raw = $3 // '';
+        my $val      = $4 // '';
         my $type = get_type( $type_raw );
         $val =~ s/"//g;
 
@@ -317,7 +319,7 @@ sub parse_walk
         my $res = ( $oid =~ /^($tmp\d+)/ );
         my $ent = $1 // '.1.3.6';
         $enterprises_full{ $ent } = '';
-        say "<$res> [$line]  <$oid> <$type>  <$val>" if ( $DEBUG{ 4 } );
+        say "<$res> [$line]  <$oid> <$type_raw> <$type>  <$val>" if ( $DEBUG{ 4 } );
     }
 
     foreach my $ent_full ( keys %enterprises_full )
@@ -350,15 +352,28 @@ sub parse_walk
         my $next = $all_oid[ $ind + 1 ] // '';
         next unless ( $next );
         my $longest = $next;
-        $longest =~ s/\.\d+$//;
+       # $longest =~ s/\.\d+$//;
+	foreach my $ent (@ent_list)
+	{
+	$longest =~ s/^$ent//;
+	
         say "<$oid> <$next> <$longest>" if ( $DEBUG{ 5 } );
-        if ( !exists $mib{ $longest } )
+       my $ext ;
+       foreach my $l ( ($longest =~ /(\d+)+/g))
+       {
+       $ext .= '.' .$l;
+       say $ent.$ext;
+       
+	
+	if ( !exists $mib{ $ent.$ext } )
         {
-            $mib{ $longest }{ type }   = 0;
-            $mib{ $longest }{ access } = 'ro';
-            $mib{ $longest }{ val }    = '';
+            $mib{ $ent.$ext }{ type }   = 0;
+            $mib{ $ent.$ext }{ access } = 'ro';
+            $mib{ $ent.$ext }{ val }    = '';
 
         }
+	}
+	}
 ##     $mib{ $oid }{ next } = $all_oid[ $ind + 1 ] // '';
     }
     @all_oid = sort { sort_oid( $a, $b ) } keys %mib;
@@ -426,8 +441,10 @@ sub parse_walk
         }
         else
         {
-            $start_oid =~ s/(\d+)\.\d+$/$1 + 1/e;
+            $start_oid =~ s/(\d+)$/$1 + 1/e;
+	    say "**** $start_oid";
             $redis->hset( 'next', $last_oid,  $start_oid );
+	    $redis->hset( 'access', $last_oid,  'ro' );
         }
     }
 
